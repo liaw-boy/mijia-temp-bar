@@ -1,70 +1,114 @@
-# MijiaTempBar 🌡️💧
+# MijiaTempBar 🌡️💧🔋
 
 [![Release](https://img.shields.io/github/v/release/liaw-boy/mijia-temp-bar?color=blue&logo=github)](https://github.com/liaw-boy/mijia-temp-bar/releases)
 [![Platform](https://img.shields.io/badge/platform-macOS%2012.0%2B-lightgrey?logo=apple)](https://www.apple.com/macos/)
 [![Linux](https://img.shields.io/badge/platform-Linux-lightgrey?logo=linux)](linux/README.md)
 [![Swift](https://img.shields.io/badge/Swift-6.0%2B-orange?logo=swift)](https://swift.org/)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-專為 **小米 / 米家藍牙溫濕度計 2（LYWSD03MMC）** 打造的極致原生 macOS 狀態列（Menu Bar）監控工具。
+專為 **小米 / 米家藍牙溫濕度計 2（LYWSD03MMC）** 打造的原生跨平台（macOS & Linux）狀態列監控與即時歷史儀表板工具。
 
-採用與知名 macOS 系統監控工具 **[Stats](https://github.com/exelban/stats)** 相同的上下雙行膠囊設計，頂天立地吃滿選單列空間，兼顧大字體與極致橫向省空間。
+支援出廠**原廠韌體**（免刷機、出廠即用）與 **第三方開源韌體**（ATC1441 / pvvx / BTHome），獨家採用「**即連即斷 (Connect-Read-Disconnect)**」超省電架構，單顆 CR2032 鈕扣電池續航可達一年以上！
 
 ---
+
+## 📸 介面預覽 (Showcase)
+
+### 1. Stats 風格狀態列雙行微型膠囊 (Menu Bar / Tray)
+採用與知名 macOS 系統監控工具 **[Stats](https://github.com/exelban/stats)** 相同的上下雙行膠囊設計，頂天立地吃滿選單列空間，兼顧大字體與極致橫向省空間：
 
 ```text
 ┌─────────────────────────┐
 │  [TMP] 24.5°            │  <-- 上排：暖橙色圓角膠囊 TMP ＋ 即時溫度
 │  [HUM] 68%              │  <-- 下排：湛藍色圓角膠囊 HUM ＋ 即時濕度
 └─────────────────────────┘
-      (寬度僅約 40px，極致節省瀏海螢幕選單列空間)
+      (寬度僅約 40px，極致節省 MacBook 瀏海螢幕選單列空間)
 ```
 
----
+同時提供 **5 種顯示樣式** 自由切換：
+- **樣式 1：Stats 雙行微型膠囊**（預設，最具辨識度）
+- **樣式 2：純數字雙行堆疊**（極簡俐落）
+- **樣式 3：橫向完整排列**（`24.5°C  68%`）
+- **樣式 4：僅顯示溫度**（`24.5°`）
+- **樣式 5：緊湊單行模式**（`24°/68%`）
 
-## 🌟 功能亮點 (Key Features)
-
-- **Stats 風格雙行微型膠囊**：
-  - 完美適配 macOS 現代選單列 24.0pt 高度，上下完全貼滿。
-  - 字體放大至 **11.2 pt 粗體**，坐在辦公桌前遠遠一眼即看清。
-  - 橫向寬度僅約 **40 像素**，絲毫不擠壓 MacBook 瀏海螢幕兩側的空間。
-- **📊 獨立原生即時儀表板與歷史趨勢折線圖 (GUI Dashboard)**：
-  - 點擊狀態列選單 **「開啟即時儀表板 (⌘D)...」**，彈出獨立深色磨砂玻璃面板。
-  - 內嵌**小米官方原廠硬體產品渲染圖 (LYWSD03MMC)**，清晰展示連線狀態與型號。
-  - **三大巨型指標卡片**：即時溫度（附今日最高/最低溫）、相對濕度（附舒適度評估）、電池電量與電壓回彈監控。
-  - **CoreGraphics 雙 Y 軸互動折線圖**：預設進入 **「📊 綜合總覽」** 同步繪製溫度（暖橙）與濕度（湛藍）雙軌對比走勢，亦可單獨切換「溫度走勢 / 濕度走勢 / 電壓回彈」，滑鼠懸停 (Hover) 即時顯示全維度數值氣泡，支援一鍵匯出 CSV 歷史數據。
-- **純原生極速、零依賴**：
-  - 基於純 Swift 與 macOS 系統原生 `CoreBluetooth` + `AppKit` 打造。
-  - **不需要** 安裝 Python、Node.js、Homebrew 或任何第三方 Runtime，下載即用。
-- **原廠與開源雙模式自動相容**：
-  - **原廠出廠韌體**：免刷機、出廠即用，直接透過 BLE GATT 協議讀取。
-  - **開源自製韌體**：自動嗅探並解析 ATC / pvvx / BTHome 格式的未加密廣播。
-- **彈性可調連線間隔（支援 1 小時與任意自訂）**：
-  - 支援從選單直接切換預設值或彈跳視窗任意輸入分鐘數：
-    - `30 秒`：即時更新模式（即時性最高，連線負載較重）
-    - `1 分鐘` / `3 分鐘`：一般動態監控
-    - `5 分鐘`：**推薦平衡模式**（預設）
-    - `10 分鐘` / `15 分鐘` / `30 分鐘`：深度省電模式
-    - `1 小時` / `2 小時`：**超省電休眠模式**（連線 1 秒休眠 3599 秒，電池續航 1 年以上）
-    - `自訂時間 (分鐘)...`：支援任意輸入分鐘數（例如輸入 60、120 或更多），滿足極致省電需求！
-- **「即連即斷 (Connect-Read-Disconnect)」極致省電架構**：
-  - 讀取數據僅花 1 秒，讀完立即中斷 BLE GATT 連線，使硬體即刻進入出廠極致休眠 (Deep Sleep)，功耗驟降 95% 以上，徹底根除連續連線造成的電池負載電壓虛降 (Voltage Sag)。
-- **智慧隱藏與自動秒連**：
-  - 開啟「僅連線時顯示」功能後，帶著筆電出門或超出藍牙範圍時，圖示會**自動完全隱藏**，保持桌面乾淨。
-  - 回到房間進入藍牙範圍，數秒內**自動無感重連並重新浮現**。
-- **Google Stitch「Vibe Design」專屬 App 圖示**：
-  - 摒棄廉價塑膠白盒造型，採用 Google Labs Stitch 的 Tech Noir 黑曜石底板 ＋ 雙向漫射霓虹光暈 ＋ 懸浮氣候膠囊設計。
+### 2. 原生即時儀表板與歷史趨勢折線圖 (GUI Dashboard)
+快捷鍵 <kbd>⌘</kbd> + <kbd>D</kbd> 或點選狀態列選單打開深色毛玻璃儀表板：
+- **官方硬體渲染標章**：清晰展示小米官方 LYWSD03MMC 硬體圖示與連線狀態指示燈。
+- **三大指標數據卡片**：
+  - 🌡️ **即時溫度**（附今日最低 / 最高溫統計）
+  - 💧 **相對濕度**（附人體舒適度評估：適宜 / 偏高 / 乾燥）
+  - 🔋 **電池電量**（附毫伏級精確即時電壓監控）
+- **互動式向量折線圖**：
+  - **📊 綜合總覽**：同屏同步繪製 **溫度 (°C)**、**濕度 (%)**、**電池電量 (%)** 三條歷史曲線，自動對齊雙 Y 軸百分比刻度。
+  - **分頁專題走勢**：支援切換「🌡️ 溫度走勢 / 💧 濕度走勢 / 🔋 電壓回彈」。
+  - **智慧避讓懸停氣泡 (Hover HUD)**：滑鼠移動時同步標記三色光暈點位，當數值位於圖表頂端時自動翻轉避讓，確保資訊絕不遮蔽。
+  - **CSV 數據匯出**：一鍵將完整採樣歷史匯出為標準 CSV 格式。
 
 ---
 
-## 📥 下載與安裝 (Installation)
+## 🌟 核心特色 (Core Highlights)
 
-### 方式 1：直接下載發行版本（最推薦）
-1. 前往 **[Releases 頁面](https://github.com/liaw-boy/mijia-temp-bar/releases)** 下載最新版 `MijiaTempBar-v1.0.0-macos.zip`。
-2. 解壓縮後將 `MijiaTempBar.app` 拖入 `/Applications`（應用程式）資料夾。
-3. 雙擊啟動即可！（首次啟動若系統跳出「想使用藍牙」，請點擊允許）。
+### ⚡ 獨家「即連即斷 (Connect-Read-Disconnect)」超省電架構
+原廠韌體預設在 BLE GATT 連線期間會開啟 Notify，每 6 秒發送一次射頻訊號，導致微型 CR2032 鈕扣電池承受劇烈負載內阻壓降 (Voltage Sag)，幾天內電壓即從 2.9V 跌破 2.85V。
 
-### 方式 2：從原始碼自行編譯 (Build from Source)
+本專案研發「**即連即斷**」極致省電演算法：
+```mermaid
+flowchart LR
+    A["休眠定時器觸發"] --> B["發起快速 BLE 連線 (~1秒)"]
+    B --> C["一次性讀取 EBE0CCC1 特徵值"]
+    C --> D["立即主動中斷藍牙連線"]
+    D --> E["感測器回到 Deep Sleep (>99.7% 時間)"]
+    E -->|等待設定間隔 e.g. 5分鐘| A
+```
+- **連線 1 秒即斷**：完全關閉 GATT Notify，讀取一次數據後立即調用 `cancelPeripheralConnection`。
+- **電池電壓完美回彈**：感測器 99.7% 時間處於 Deep Sleep 休眠，鈕扣電池電壓顯著回升（實測從 2.854V 回彈至 2.880V+），續航延長至一年以上！
+
+### ⏱️ 彈性可調連線間隔（支援自訂分鐘）
+選單支援快速切換預設間隔或彈窗輸入任意分鐘數：
+- `30 秒`：即時調試模式
+- `1 分鐘` / `3 分鐘`：一般動態監控
+- `5 分鐘`：**推薦平衡模式**（預設）
+- `10 分鐘` / `15 分鐘` / `30 分鐘`：深度省電模式
+- `1 小時` / `2 小時`：**超省電休眠模式**（連線 1 秒、休眠 3599 秒）
+- `自訂時間 (分鐘)...`：支援任意整數分鐘（如 45、90、120 分鐘等）。
+
+### 🔌 原廠出廠與開源韌體雙模自動相容
+- **原廠官方韌體**：免刷機、出廠即用，直接透過 BLE GATT 協議精準讀取。
+- **開源自製韌體**：自動嗅探並解析 ATC1441、pvvx、BTHome v2 廣播封包。
+
+### 👻 智慧隱藏與自動秒連
+- 啟用「**僅連線時顯示**」後，帶著筆電外出或超出藍牙範圍時，選單列圖示會**自動完全隱藏**，保持桌面乾淨。
+- 回到室內藍牙範圍內，數秒內**自動無感重連並重新浮現**。
+- 啟動瞬間先讀取本機快取數據，徹底消除選單列閃爍。
+
+---
+
+## 🖥️ 跨平台支援 (macOS & Linux)
+
+本專案提供兩個平台的原生實現：
+
+| 平台 | 技術棧 | 系統匣實作 | 介面渲染 |
+| :--- | :--- | :--- | :--- |
+| **🍎 macOS** | Swift 6 + AppKit + CoreBluetooth | `NSStatusItem` | CoreGraphics 向量圖形 |
+| **🐧 Linux** | Python 3.10+ + BlueZ + bleak | Ayatana AppIndicator (SNI) | GTK 3 + Cairo + Pango |
+
+兩者功能保持 100% 一致（5 種狀態列樣式、即時儀表板、綜合折線圖、CSV 匯出、省電輪詢）。
+
+---
+
+## 📥 安裝與使用 (Installation)
+
+### 🍎 macOS 版本
+
+#### 方式 1：直接下載發行版本（最推薦）
+1. 前往 **[Releases 頁面](https://github.com/liaw-boy/mijia-temp-bar/releases)** 下載最新版 `MijiaTempBar-v1.3.0.zip`。
+2. 解壓縮後將 `MijiaTempBar.app` 拖移至 `/Applications`（應用程式）資料夾。
+3. 雙擊啟動即可！（首次啟動若系統跳出「想使用藍牙」，請點選允許）。
+
+#### 方式 2：從原始碼自行編譯
+本專案為純 Swift 原生專案，**零第三方套件依賴**：
 ```bash
 git clone https://github.com/liaw-boy/mijia-temp-bar.git
 cd mijia-temp-bar
@@ -72,22 +116,35 @@ cd mijia-temp-bar
 open MijiaTempBar.app
 ```
 
+#### 開機自動啟動 (Launch at Login)
+1. 打開 Mac **系統設定** > **一般** > **登入項目與擴充功能**。
+2. 在「**登入時打開**」區域點擊 `+` 號，選取 `MijiaTempBar.app` 即可。
+
+---
+
 ### 🐧 Linux 版本
-Linux 版（Python + GTK + AppIndicator，透過 BlueZ 讀取藍牙）位於 [`linux/`](linux/README.md) 目錄，功能與 macOS 版相同：
+
+詳細說明請參閱 **[linux/README.md](linux/README.md)**。
+
+#### 1. 安裝系統相依套件
+```bash
+# Ubuntu / Debian
+sudo apt install python3-venv python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-ayatanaappindicator3-0.1 bluez
+
+# Fedora
+sudo dnf install python3-gobject python3-cairo gtk3 libayatana-appindicator-gtk3 bluez
+
+# Arch Linux
+sudo pacman -S python-gobject python-cairo gtk3 libayatana-appindicator bluez
+```
+
+#### 2. 一鍵安裝（安裝至 `~/.local`，無須 root 權限）
 ```bash
 cd mijia-temp-bar/linux
 ./install.sh
 ```
-詳細需求與說明請見 **[linux/README.md](linux/README.md)**。
-
----
-
-## ⚙️ 開機自動啟動 (Launch at Login)
-
-若希望每次開機自動在狀態列顯示：
-1. 打開 Mac **系統設定** > **一般** > **登入項目與擴充功能**。
-2. 在「**登入時打開**」區域點擊 `+` 號。
-3. 選取本專案的 `MijiaTempBar.app` 即可。
+安裝完成後可從應用程式選單啟動「**米家溫濕度狀態列**」，或在終端機輸入 `mijia-temp-bar`。
+開機自動啟動可直接在系統匣選單勾選「**開機時自動啟動**」。
 
 ---
 
@@ -107,24 +164,35 @@ cd mijia-temp-bar/linux
 
 ---
 
-## 🛠️ 專案檔案結構 (Project Structure)
+## 🛠️ 專案目錄結構 (Project Structure)
 
 ```
 mijia-temp-bar/
-├── Sources/
-│   ├── main.swift              # AppKit 生命週期與常駐模式進入點
-│   ├── StatusBarController.swift# 狀態列介面、Stats 雙行膠囊渲染、下拉選單
-│   ├── BluetoothManager.swift  # CoreBluetooth 藍牙搜尋、GATT 連線、廣播解析
-│   └── Logger.swift            # 輕量本機除錯日誌 (/tmp/mijia_temp_bar.log)
-├── generate_icon.swift         # Google Stitch Vibe Design 原生圖示生成腳本
-├── bundle.sh                   # 一鍵編譯、資源打包與 Ad-hoc 本機簽名腳本
-├── linux/                      # Linux 版 (Python + GTK + AppIndicator + BlueZ)
-├── LICENSE                     # MIT 開源授權
-└── README.md
+├── Sources/                          # macOS 原生 Swift 原始碼
+│   ├── main.swift                    # AppKit 生命週期與常駐模式進入點
+│   ├── StatusBarController.swift     # 狀態列介面、Stats 雙行膠囊渲染、下拉選單
+│   ├── BluetoothManager.swift        # CoreBluetooth 藍牙搜尋、即連即斷省電讀取、廣播解析
+│   ├── DashboardWindowController.swift # 即時儀表板視窗、硬體渲染卡片、舒適度評估
+│   ├── ChartView.swift               # CoreGraphics 雙 Y 軸、三線走勢圖、時間比例 X 軸、HUD 氣泡
+│   ├── HistoryManager.swift          # 歷史資料持久化、JSON 儲存、CSV 匯出
+│   └── Logger.swift                  # 輕量本機除錯日誌 (/tmp/mijia_temp_bar.log)
+├── Resources/
+│   └── device.png                    # 小米官方 LYWSD03MMC 硬體高解析透明圖
+├── generate_icon.swift               # Google Stitch Vibe Design 原生圖示生成腳本
+├── bundle.sh                         # 一鍵編譯、資源打包與 Ad-hoc 本機簽名腳本
+├── linux/                            # Linux 移植版本 (Python + GTK + AppIndicator + BlueZ)
+│   ├── README.md                     # Linux 版專屬使用與架構手冊
+│   ├── install.sh / uninstall.sh     # Linux 一鍵安裝與解除安裝腳本
+│   ├── requirements.txt              # Python 套件清單 (bleak)
+│   ├── mijia_temp_bar/               # Linux 核心模組 (對應 macOS 各 Swift 元件)
+│   ├── screenshots/                  # Linux 介面截圖
+│   └── tests/                        # 單元測試 (廣播解析、歷史紀錄)
+├── LICENSE                           # MIT 開源授權
+└── README.md                         # 專案主說明文件
 ```
 
 ---
 
 ## 📄 授權條款 (License)
 
-本專案採用 [MIT License](LICENSE) 授權開放原始碼。
+本專案採用 [MIT License](LICENSE) 授權開放原始碼。歡迎社群提交 Issue 與 Pull Request！
