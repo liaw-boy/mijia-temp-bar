@@ -234,7 +234,13 @@ final class DashboardWindowController: NSWindowController {
         humSubLabel.stringValue = comfort
 
         batValueLabel.stringValue = String(format: "%d%%", r.batteryPercent)
-        batSubLabel.stringValue = String(format: "即時電壓 %.3f V · 狀態穩定", r.voltage)
+        if r.batteryPercent <= 15 || r.voltage <= 2.60 {
+            batSubLabel.stringValue = String(format: "⚠️ 電壓 %.3f V · 電量過低請換電池", r.voltage)
+            batSubLabel.textColor = NSColor(red: 1.0, green: 0.38, blue: 0.38, alpha: 1.0)
+        } else {
+            batSubLabel.stringValue = String(format: "即時電壓 %.3f V · 狀態穩定", r.voltage)
+            batSubLabel.textColor = NSColor(white: 0.70, alpha: 1.0)
+        }
 
         let df = DateFormatter()
         df.dateFormat = "HH:mm:ss"

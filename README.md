@@ -74,6 +74,13 @@ flowchart LR
 - `1 小時` / `2 小時`：**超省電休眠模式**（連線 1 秒、休眠 3599 秒）
 - `自訂時間 (分鐘)...`：支援任意整數分鐘（如 45、90、120 分鐘等）。
 
+### 🔔 低電量智慧預警與推播通知 (Low Battery Notification)
+CR2032 鈕扣電池在壽命末期（電壓跌破 2.60V）會進入斷崖式崩塌放電，幾天內即會完全耗盡：
+- **雙重健康門檻診斷**：當電量 $\le 15\%$ 或電壓 $\le 2.60\text{V}$ 時，自動觸發低電量預警。
+- **macOS 原生系統橫幅推播 (UserNotifications)**：即時彈出 macOS 系統通知，提醒及早備妥並更換 CR2032 電池。
+- **24 小時防干擾冷卻機制**：每日最多提醒一次，絕不產生通知轟炸。換上新電池後自動復位重置。
+- **狀態列與選單視覺化警示**：狀態列選單與儀表板卡片同步標記 `⚠️ 電量過低` 紅色醒目標籤，選單亦提供獨立開關隨時關閉或啟用提醒。
+
 ### 🔌 原廠出廠與開源韌體雙模自動相容
 - **原廠官方韌體**：免刷機、出廠即用，直接透過 BLE GATT 協議精準讀取。
 - **開源自製韌體**：自動嗅探並解析 ATC1441、pvvx、BTHome v2 廣播封包。
@@ -175,6 +182,7 @@ mijia-temp-bar/
 │   ├── DashboardWindowController.swift # 即時儀表板視窗、硬體渲染卡片、舒適度評估
 │   ├── ChartView.swift               # CoreGraphics 雙 Y 軸、三線走勢圖、時間比例 X 軸、HUD 氣泡
 │   ├── HistoryManager.swift          # 歷史資料持久化、JSON 儲存、CSV 匯出
+│   ├── NotificationManager.swift     # 低電量預警診斷、macOS 系統橫幅推播、24h 防干擾冷卻
 │   └── Logger.swift                  # 輕量本機除錯日誌 (/tmp/mijia_temp_bar.log)
 ├── Resources/
 │   └── device.png                    # 小米官方 LYWSD03MMC 硬體高解析透明圖

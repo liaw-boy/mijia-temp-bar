@@ -185,6 +185,16 @@ final class StatusBarController: NSObject {
         hideWhenDisconnectedMenuItem.state = hideWhenDisconnected ? .on : .off
         menu.addItem(hideWhenDisconnectedMenuItem)
 
+        // 低電量警示通知開關
+        let lowBatteryMenuItem = NSMenuItem(
+            title: "🔔 低電量警示通知 (電量 ≤ 15%)",
+            action: #selector(toggleLowBatteryNotification),
+            keyEquivalent: ""
+        )
+        lowBatteryMenuItem.target = self
+        lowBatteryMenuItem.state = NotificationManager.shared.isEnabled ? .on : .off
+        menu.addItem(lowBatteryMenuItem)
+
         // 樣式切換子選單
         let styleSubMenu = NSMenu()
         let styleItemStats = NSMenuItem(title: "Stats 膠囊縮寫樣式 ([TMP] / [HUM])", action: #selector(setDisplayStatsBadge), keyEquivalent: "")
@@ -544,6 +554,12 @@ final class StatusBarController: NSObject {
         }
     }
 
+    @objc private func toggleLowBatteryNotification(_ sender: NSMenuItem) {
+        NotificationManager.shared.isEnabled.toggle()
+        sender.state = NotificationManager.shared.isEnabled ? .on : .off
+        mijiaLog("低電量通知設定變更: \(NotificationManager.shared.isEnabled ? "開啟" : "關閉")")
+    }
+
     @objc private func handleQuit() {
         NSApplication.shared.terminate(nil)
     }
@@ -583,13 +599,18 @@ extension StatusBarController: BluetoothManagerDelegate {
             battery: reading.batteryPercent
         )
         dashboardController?.updateReading(reading)
+        NotificationManager.shared.checkReading(reading)
     }
 
     private func applyReadingToMenu(_ reading: SensorReading) {
         headerMenuItem.title = reading.deviceName
         tempMenuItem.title = String(format: "溫度: %.1f °C", reading.temperature)
         humMenuItem.title = String(format: "濕度: %.1f %%", reading.humidity)
-        batMenuItem.title = String(format: "電量: %d %% (%.2fV)", reading.batteryPercent, reading.voltage)
+        if reading.batteryPercent <= 15 || reading.voltage <= 2.60 {
+            batMenuItem.title = String(format: "⚠️ 電量過低: %d %% (%.3fV) - 請換電池", reading.batteryPercent, reading.voltage)
+        } else {
+            batMenuItem.title = String(format: "電量: %d %% (%.3fV)", reading.batteryPercent, reading.voltage)
+        }
         modeMenuItem.title = "連線模式: \(reading.mode)"
 
         let formatter = DateFormatter()

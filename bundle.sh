@@ -12,6 +12,7 @@ echo "==> 正在編譯 MijiaTempBar (Swift Native)..."
 swiftc -O -module-cache-path /tmp/clang_cache \
     -framework AppKit \
     -framework CoreBluetooth \
+    -framework UserNotifications \
     Sources/*.swift \
     -o MijiaTempBar
 
