@@ -10,3 +10,4 @@ AppIcon.iconset
 AppIcon.icns
 *.o
 *.dylib
+*.zip
