@@ -84,9 +84,9 @@ final class BluetoothManager: NSObject {
             delegate?.didUpdateStatus("更新數據連線中...")
             isSleepingBetweenPolls = false
 
-            // 12 秒連線超時機制 (避免設備不在場時長時間掛起)
+            // 25 秒連線超時機制 (給予充足時間接收低功耗廣播封包)
             connectTimeoutTimer?.invalidate()
-            connectTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 12.0, repeats: false) { [weak self] _ in
+            connectTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 25.0, repeats: false) { [weak self] _ in
                 guard let self = self else { return }
                 mijiaLog("連線超時 (可能設備暫時超出範圍)，取消並排定下次重試...")
                 self.centralManager.cancelPeripheralConnection(p)

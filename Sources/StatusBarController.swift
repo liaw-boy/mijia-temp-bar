@@ -30,6 +30,7 @@ final class StatusBarController: NSObject {
     private var intervalSubMenu: NSMenu!
     private var customIntervalMenuItem: NSMenuItem!
     private var dashboardController: DashboardWindowController?
+    private var latestReading: SensorReading?
 
     override init() {
         super.init()
@@ -53,9 +54,29 @@ final class StatusBarController: NSObject {
         setupStatusItem()
         setupMenu()
 
-        // 啟動時計時器
-        if hideWhenDisconnected {
-            tempShowTimer = Timer.scheduledTimer(withTimeInterval: 8.0, repeats: false) { [weak self] _ in
+        bluetoothManager = BluetoothManager()
+        bluetoothManager.delegate = self
+
+        // 啟動時立刻恢復最近一次讀取的數據 (避免圖示閃爍或意外消失)
+        if let last = HistoryManager.shared.points.last {
+            isConnected = true
+            statusItem.isVisible = true
+            let cachedReading = SensorReading(
+                temperature: last.temperature,
+                humidity: last.humidity,
+                batteryPercent: last.batteryPercent,
+                voltage: last.voltage,
+                rssi: nil,
+                deviceName: "LYWSD03MMC",
+                lastUpdated: last.timestamp,
+                mode: "原廠直連 (秒讀休眠)"
+            )
+            latestReading = cachedReading
+            updateTitle()
+            applyReadingToMenu(cachedReading)
+        } else if hideWhenDisconnected {
+            // 首次全新安裝無快取數據時，若超過 45 秒未連線才依設定隱藏
+            tempShowTimer = Timer.scheduledTimer(withTimeInterval: 45.0, repeats: false) { [weak self] _ in
                 guard let self = self else { return }
                 if !self.isConnected {
                     self.statusItem.isVisible = false
@@ -64,8 +85,6 @@ final class StatusBarController: NSObject {
             }
         }
 
-        bluetoothManager = BluetoothManager()
-        bluetoothManager.delegate = self
         bluetoothManager.startScan()
         refreshIntervalMenuChecks()
     }
@@ -209,7 +228,7 @@ final class StatusBarController: NSObject {
     private func updateTitle() {
         guard let button = statusItem.button else { return }
 
-        guard let r = bluetoothManager.currentReading else {
+        guard let r = latestReading ?? bluetoothManager?.currentReading else {
             button.image = nil
             button.title = "🌡️ 搜尋中..."
             return
@@ -550,10 +569,23 @@ extension StatusBarController: BluetoothManagerDelegate {
         isConnected = true
         tempShowTimer?.invalidate()
         tempShowTimer = nil
+        latestReading = reading
 
         statusItem.isVisible = true
         updateTitle()
+        applyReadingToMenu(reading)
 
+        // 記錄歷史數據並同步儀表板
+        HistoryManager.shared.addPoint(
+            temp: reading.temperature,
+            hum: reading.humidity,
+            volt: reading.voltage,
+            battery: reading.batteryPercent
+        )
+        dashboardController?.updateReading(reading)
+    }
+
+    private func applyReadingToMenu(_ reading: SensorReading) {
         headerMenuItem.title = reading.deviceName
         tempMenuItem.title = String(format: "溫度: %.1f °C", reading.temperature)
         humMenuItem.title = String(format: "濕度: %.1f %%", reading.humidity)
@@ -564,15 +596,6 @@ extension StatusBarController: BluetoothManagerDelegate {
         formatter.dateFormat = "HH:mm:ss"
         timeMenuItem.title = "最後更新: \(formatter.string(from: reading.lastUpdated))"
         statusMenuItem.title = "狀態: 正常運作中"
-
-        // 記錄歷史數據並同步儀表板
-        HistoryManager.shared.addPoint(
-            temp: reading.temperature,
-            hum: reading.humidity,
-            volt: reading.voltage,
-            battery: reading.batteryPercent
-        )
-        dashboardController?.updateReading(reading)
     }
 
     func didFailWithError(_ error: String) {
