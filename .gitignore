@@ -1,0 +1,12 @@
+# macOS
+.DS_Store
+*.swp
+*~
+
+# Build artifacts
+MijiaTempBar
+MijiaTempBar.app
+AppIcon.iconset
+AppIcon.icns
+*.o
+*.dylib
