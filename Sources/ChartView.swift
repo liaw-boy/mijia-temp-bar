@@ -193,10 +193,11 @@ final class ChartView: NSView {
         endStr.draw(at: NSPoint(x: graphRect.maxX - endSz.width, y: 12), withAttributes: labelAttrs)
     }
 
-    // MARK: - 綜合總覽模式 (雙 Y 軸)
+    // MARK: - 綜合總覽模式 (雙 Y 軸：左側溫度 °C，右側百分比 % 包含濕度與電池電量)
     private func drawOverviewMode(in ctx: CGContext, graphRect: NSRect, startTime: Date, totalSpan: TimeInterval) {
         let temps = points.map { $0.temperature }
         let hums = points.map { $0.humidity }
+        let bats = points.map { Double($0.batteryPercent) }
 
         let rawMinT = temps.min() ?? 20.0
         let rawMaxT = temps.max() ?? 30.0
@@ -205,11 +206,22 @@ final class ChartView: NSView {
 
         let rawMinH = hums.min() ?? 40.0
         let rawMaxH = hums.max() ?? 80.0
-        let minH = max(0.0, floor(rawMinH / 5.0) * 5.0 - 5.0)
-        let maxH = min(100.0, ceil(rawMaxH / 5.0) * 5.0 + 5.0)
+        let rawMinB = bats.min() ?? 50.0
+        let rawMaxB = bats.max() ?? 100.0
 
-        let tempColor = NSColor(red: 1.0, green: 0.48, blue: 0.12, alpha: 1.0) // 暖橙
-        let humColor = NSColor(red: 0.05, green: 0.68, blue: 1.0, alpha: 1.0)   // 湛藍
+        let rawMinPct = min(rawMinH, rawMinB)
+        let rawMaxPct = max(rawMaxH, rawMaxB)
+
+        var minPct = max(0.0, floor(rawMinPct / 5.0) * 5.0 - 5.0)
+        var maxPct = min(100.0, ceil(rawMaxPct / 5.0) * 5.0 + 5.0)
+        if maxPct - minPct < 20.0 {
+            minPct = max(0.0, minPct - 10.0)
+            maxPct = min(100.0, maxPct + 10.0)
+        }
+
+        let tempColor = NSColor(red: 1.0, green: 0.48, blue: 0.12, alpha: 1.0) // 暖橙 (溫度)
+        let humColor = NSColor(red: 0.05, green: 0.68, blue: 1.0, alpha: 1.0)   // 湛藍 (濕度)
+        let batColor = NSColor(red: 0.10, green: 0.88, blue: 0.52, alpha: 1.0)   // 翠綠 (電池電量)
 
         // 1. 水平參考線與雙 Y 軸刻度
         let gridLines = 4
@@ -217,10 +229,13 @@ final class ChartView: NSView {
             .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .bold),
             .foregroundColor: tempColor
         ]
-        let labelAttrsH: [NSAttributedString.Key: Any] = [
+        let labelAttrsPct: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .bold),
-            .foregroundColor: humColor
+            .foregroundColor: NSColor(white: 0.72, alpha: 1.0)
         ]
+
+        let pctRange = max(1.0, maxPct - minPct)
+        let tempRange = max(0.5, maxT - minT)
 
         for i in 0...gridLines {
             let ratio = CGFloat(i) / CGFloat(gridLines)
@@ -233,60 +248,69 @@ final class ChartView: NSView {
             ctx.addLine(to: CGPoint(x: graphRect.maxX, y: y))
             ctx.strokePath()
 
-            let valT = minT + Double(ratio) * (maxT - minT)
+            let valT = minT + Double(ratio) * tempRange
             let strT = String(format: "%.1f°", valT) as NSString
             let szT = strT.size(withAttributes: labelAttrsT)
             strT.draw(at: NSPoint(x: graphRect.minX - szT.width - 6, y: y - szT.height / 2), withAttributes: labelAttrsT)
 
-            let valH = minH + Double(ratio) * (maxH - minH)
-            let strH = String(format: "%.0f%%", valH) as NSString
-            let szH = strH.size(withAttributes: labelAttrsH)
-            strH.draw(at: NSPoint(x: graphRect.maxX + 6, y: y - szH.height / 2), withAttributes: labelAttrsH)
+            let valPct = minPct + Double(ratio) * pctRange
+            let strPct = String(format: "%.0f%%", valPct) as NSString
+            let szPct = strPct.size(withAttributes: labelAttrsPct)
+            strPct.draw(at: NSPoint(x: graphRect.maxX + 6, y: y - szPct.height / 2), withAttributes: labelAttrsPct)
         }
         ctx.setLineDash(phase: 0, lengths: [])
 
         // 2. 基於真實時間計算座標點 (確保 X 嚴格單調遞增，永不折返交叉)
         var coordsT: [CGPoint] = []
         var coordsH: [CGPoint] = []
+        var coordsB: [CGPoint] = []
 
         for p in points {
             let xRatio = CGFloat(p.timestamp.timeIntervalSince(startTime) / totalSpan)
             let x = graphRect.minX + max(0.0, min(1.0, xRatio)) * graphRect.width
 
-            let yT = graphRect.minY + CGFloat((p.temperature - minT) / (maxT - minT)) * graphRect.height
-            let yH = graphRect.minY + CGFloat((p.humidity - minH) / (maxH - minH)) * graphRect.height
+            let yT = graphRect.minY + CGFloat((p.temperature - minT) / tempRange) * graphRect.height
+            let yH = graphRect.minY + CGFloat((p.humidity - minPct) / pctRange) * graphRect.height
+            let yB = graphRect.minY + CGFloat((Double(p.batteryPercent) - minPct) / pctRange) * graphRect.height
 
             coordsT.append(CGPoint(x: x, y: yT))
             coordsH.append(CGPoint(x: x, y: yH))
+            coordsB.append(CGPoint(x: x, y: yB))
         }
 
-        // 3. 繪製底部光暈與主折線
-        drawGradientArea(coords: coordsT, minY: graphRect.minY, color: tempColor.withAlphaComponent(0.18), in: ctx)
-        drawGradientArea(coords: coordsH, minY: graphRect.minY, color: humColor.withAlphaComponent(0.18), in: ctx)
+        // 3. 繪製底部光暈與主折線 (分層渲染：電量輕柔漸層、濕度與溫度漸層)
+        drawGradientArea(coords: coordsB, minY: graphRect.minY, color: batColor.withAlphaComponent(0.08), in: ctx)
+        drawGradientArea(coords: coordsH, minY: graphRect.minY, color: humColor.withAlphaComponent(0.12), in: ctx)
+        drawGradientArea(coords: coordsT, minY: graphRect.minY, color: tempColor.withAlphaComponent(0.14), in: ctx)
 
-        drawConnectedLine(coords: coordsT, color: tempColor, lineWidth: 2.4, in: ctx)
+        drawConnectedLine(coords: coordsB, color: batColor, lineWidth: 2.2, in: ctx)
         drawConnectedLine(coords: coordsH, color: humColor, lineWidth: 2.4, in: ctx)
+        drawConnectedLine(coords: coordsT, color: tempColor, lineWidth: 2.4, in: ctx)
 
         // 4. 圖例
         let legY = graphRect.maxY + 4
         "● 溫度 (°C)".draw(at: NSPoint(x: graphRect.minX + 4, y: legY), withAttributes: [.font: NSFont.systemFont(ofSize: 11, weight: .bold), .foregroundColor: tempColor])
-        "● 濕度 (%)".draw(at: NSPoint(x: graphRect.minX + 85, y: legY), withAttributes: [.font: NSFont.systemFont(ofSize: 11, weight: .bold), .foregroundColor: humColor])
+        "● 濕度 (%)".draw(at: NSPoint(x: graphRect.minX + 90, y: legY), withAttributes: [.font: NSFont.systemFont(ofSize: 11, weight: .bold), .foregroundColor: humColor])
+        "● 電量 (%)".draw(at: NSPoint(x: graphRect.minX + 176, y: legY), withAttributes: [.font: NSFont.systemFont(ofSize: 11, weight: .bold), .foregroundColor: batColor])
 
         // 5. 懸停提示
         if let hPoint = hoveredPoint, hoveredPointCoord != nil {
             let xRatio = CGFloat(hPoint.timestamp.timeIntervalSince(startTime) / totalSpan)
             let x = graphRect.minX + max(0.0, min(1.0, xRatio)) * graphRect.width
-            let yT = graphRect.minY + CGFloat((hPoint.temperature - minT) / (maxT - minT)) * graphRect.height
-            let yH = graphRect.minY + CGFloat((hPoint.humidity - minH) / (maxH - minH)) * graphRect.height
+            let yT = graphRect.minY + CGFloat((hPoint.temperature - minT) / tempRange) * graphRect.height
+            let yH = graphRect.minY + CGFloat((hPoint.humidity - minPct) / pctRange) * graphRect.height
+            let yB = graphRect.minY + CGFloat((Double(hPoint.batteryPercent) - minPct) / pctRange) * graphRect.height
 
             drawCrosshair(x: x, graphRect: graphRect, in: ctx)
-            drawGlowDot(at: CGPoint(x: x, y: yT), color: tempColor, in: ctx)
+            drawGlowDot(at: CGPoint(x: x, y: yB), color: batColor, in: ctx)
             drawGlowDot(at: CGPoint(x: x, y: yH), color: humColor, in: ctx)
+            drawGlowDot(at: CGPoint(x: x, y: yT), color: tempColor, in: ctx)
 
             let df = DateFormatter()
             df.dateFormat = "HH:mm:ss"
             let text = "\(df.string(from: hPoint.timestamp))  ·  🌡️ \(String(format: "%.1f°C", hPoint.temperature))   💧 \(String(format: "%.0f%%", hPoint.humidity))   🔋 \(hPoint.batteryPercent)%"
-            drawHUDTooltip(text: text, at: CGPoint(x: x, y: max(yT, yH) + 14), graphRect: graphRect, in: ctx)
+            let topY = max(yT, max(yH, yB))
+            drawHUDTooltip(text: text, at: CGPoint(x: x, y: topY + 14), graphRect: graphRect, in: ctx)
         }
     }
 
@@ -488,7 +512,11 @@ final class ChartView: NSView {
         let bubbleW = sz.width + 20
         let bubbleH: CGFloat = 26
         let x = max(graphRect.minX + 4, min(graphRect.maxX - bubbleW - 4, point.x - bubbleW / 2))
-        let y = min(graphRect.maxY - bubbleH - 4, max(graphRect.minY + 4, point.y))
+        
+        var y = point.y
+        if y + bubbleH > graphRect.maxY {
+            y = max(graphRect.minY + 4, point.y - bubbleH - 28)
+        }
         let rect = NSRect(x: x, y: y, width: bubbleW, height: bubbleH)
 
         ctx.saveGState()
