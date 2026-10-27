@@ -22,9 +22,12 @@ final class BluetoothManager: NSObject {
     weak var delegate: BluetoothManagerDelegate?
 
     private var centralManager: CBCentralManager!
-    private var connectedPeripheral: CBPeripheral?
+    private var targetPeripheral: CBPeripheral?
     private var targetCharacteristic: CBCharacteristic?
     private var refreshTimer: Timer?
+    private var connectTimeoutTimer: Timer?
+    private var isSleepingBetweenPolls: Bool = false
+    private var nextUpdateTime: Date?
 
     // 使用者自訂連線更新間隔 (秒)，預設 300 秒 (5 分鐘)
     private(set) var refreshInterval: TimeInterval = 300.0
@@ -51,7 +54,7 @@ final class BluetoothManager: NSObject {
             UserDefaults.standard.set(300.0, forKey: "RefreshIntervalSeconds")
         }
 
-        mijiaLog("BluetoothManager 初始化 (設定連線間隔: \(Int(refreshInterval)) 秒)...")
+        mijiaLog("BluetoothManager 初始化 (省電輪詢模式，設定間隔: \(Int(refreshInterval)) 秒)...")
         centralManager = CBCentralManager(delegate: self, queue: .main)
     }
 
@@ -59,24 +62,57 @@ final class BluetoothManager: NSObject {
         refreshInterval = seconds
         UserDefaults.standard.set(seconds, forKey: "RefreshIntervalSeconds")
         mijiaLog("連線間隔已調整為: \(Int(seconds)) 秒")
-        resetRefreshTimer()
+        planNextPoll()
     }
 
-    private func resetRefreshTimer() {
+    private func planNextPoll() {
         refreshTimer?.invalidate()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: refreshInterval, repeats: true) { [weak self] _ in
+        nextUpdateTime = Date().addingTimeInterval(refreshInterval)
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: refreshInterval, repeats: false) { [weak self] _ in
             guard let self = self else { return }
-            self.triggerIntervalRead()
+            mijiaLog("省電定時喚醒：準備發起下一次輪詢連線...")
+            self.connectAndFetch()
         }
     }
 
-    private func triggerIntervalRead() {
-        if let p = connectedPeripheral, let c = targetCharacteristic {
-            mijiaLog("定時主動讀取溫濕度數據 (間隔: \(Int(refreshInterval))s)...")
-            p.readValue(for: c)
-        } else {
-            restart()
+    func connectAndFetch() {
+        guard centralManager.state == .poweredOn else { return }
+
+        // 若已有目標周邊參照，直接發起連線（最省電、最快速）
+        if let p = targetPeripheral {
+            mijiaLog("正在快速連線至設備 \(p.name ?? p.identifier.uuidString)...")
+            delegate?.didUpdateStatus("更新數據連線中...")
+            isSleepingBetweenPolls = false
+
+            // 12 秒連線超時機制 (避免設備不在場時長時間掛起)
+            connectTimeoutTimer?.invalidate()
+            connectTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 12.0, repeats: false) { [weak self] _ in
+                guard let self = self else { return }
+                mijiaLog("連線超時 (可能設備暫時超出範圍)，取消並排定下次重試...")
+                self.centralManager.cancelPeripheralConnection(p)
+                self.delegate?.didUpdateStatus("設備未在連線範圍內")
+                self.planNextPoll()
+            }
+
+            centralManager.connect(p, options: nil)
+            return
         }
+
+        // 若無周邊參照，嘗試從 UserDefaults 讀取已存 UUID
+        if let savedUUIDStr = UserDefaults.standard.string(forKey: "TargetPeripheralUUID"),
+           let uuid = UUID(uuidString: savedUUIDStr) {
+            let known = centralManager.retrievePeripherals(withIdentifiers: [uuid])
+            if let p = known.first {
+                mijiaLog("從已存 UUID (\(uuid.uuidString)) 快速恢復周邊參照...")
+                targetPeripheral = p
+                targetPeripheral?.delegate = self
+                connectAndFetch()
+                return
+            }
+        }
+
+        // 若尚未發現過設備，啟動掃描
+        startScan()
     }
 
     func startScan() {
@@ -101,23 +137,18 @@ final class BluetoothManager: NSObject {
 
     func restart() {
         mijiaLog("手動重啟掃描...")
-        if let p = connectedPeripheral {
-            centralManager.cancelPeripheralConnection(p)
-            connectedPeripheral = nil
-        }
-        targetCharacteristic = nil
         refreshTimer?.invalidate()
-        refreshTimer = nil
+        connectTimeoutTimer?.invalidate()
+        isSleepingBetweenPolls = false
+        if let p = targetPeripheral {
+            centralManager.cancelPeripheralConnection(p)
+        }
         startScan()
     }
 
     func manualRefresh() {
-        if let p = connectedPeripheral, let c = targetCharacteristic {
-            mijiaLog("手動讀取 characteristic...")
-            p.readValue(for: c)
-        } else {
-            restart()
-        }
+        mijiaLog("手動要求立即重新整理...")
+        connectAndFetch()
     }
 
     private func saveStatusJSON(status: String) {
@@ -146,7 +177,7 @@ extension BluetoothManager: CBCentralManagerDelegate {
         mijiaLog("CBCentralManager 狀態更新: \(central.state.rawValue)")
         switch central.state {
         case .poweredOn:
-            startScan()
+            connectAndFetch()
         case .poweredOff:
             mijiaLog("錯誤: 電腦藍牙已關閉")
             delegate?.didUpdateStatus("電腦藍牙已關閉")
@@ -185,39 +216,44 @@ extension BluetoothManager: CBCentralManagerDelegate {
 
         // 情況 B：原廠韌體設備
         if name.contains("LYWSD03MMC") || name.hasPrefix("MJ_HT_") {
-            if connectedPeripheral == nil {
-                mijiaLog("發現目標原廠設備: \(name) [\(peripheral.identifier.uuidString)]，嘗試連線...")
-                delegate?.didUpdateStatus("已發現設備，連線中...")
-                connectedPeripheral = peripheral
-                connectedPeripheral?.delegate = self
-                centralManager.connect(peripheral, options: nil)
-            }
+            mijiaLog("發現目標原廠設備: \(name) [\(peripheral.identifier.uuidString)]，記住並連線...")
+            UserDefaults.standard.set(peripheral.identifier.uuidString, forKey: "TargetPeripheralUUID")
+            targetPeripheral = peripheral
+            targetPeripheral?.delegate = self
+            stopScan()
+            connectAndFetch()
         }
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        mijiaLog("已連線至 \(peripheral.name ?? "設備")，正在探索服務...")
-        delegate?.didUpdateStatus("已連線，讀取服務中...")
+        mijiaLog("已連線至 \(peripheral.name ?? "設備")，正在探索溫濕度服務...")
+        delegate?.didUpdateStatus("讀取感測數據中...")
         peripheral.discoverServices([serviceUUID])
-        stopScan()
-        resetRefreshTimer()
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
-        mijiaLog("連線失敗: \(error?.localizedDescription ?? "未知原因")，重新掃描...")
-        delegate?.didUpdateStatus("連線失敗，重新搜尋中...")
-        connectedPeripheral = nil
-        startScan()
+        connectTimeoutTimer?.invalidate()
+        connectTimeoutTimer = nil
+        mijiaLog("連線失敗: \(error?.localizedDescription ?? "未知原因")")
+        delegate?.didUpdateStatus("連線失敗，等待下次輪詢")
+        planNextPoll()
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
-        mijiaLog("與設備連線中斷: \(error?.localizedDescription ?? "正常斷線")，重新掃描...")
-        delegate?.didUpdateStatus("連線中斷，重新連線中...")
-        connectedPeripheral = nil
-        targetCharacteristic = nil
-        refreshTimer?.invalidate()
-        refreshTimer = nil
-        startScan()
+        connectTimeoutTimer?.invalidate()
+        connectTimeoutTimer = nil
+
+        if isSleepingBetweenPolls {
+            mijiaLog("設備已成功進入省電休眠。")
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm"
+            let nextStr = nextUpdateTime != nil ? formatter.string(from: nextUpdateTime!) : "--:--"
+            delegate?.didUpdateStatus("省電休眠中 (下次更新 \(nextStr))")
+            return
+        }
+
+        mijiaLog("非預期連線中斷: \(error?.localizedDescription ?? "正常斷線")")
+        delegate?.didUpdateStatus("設備未在連線範圍內")
     }
 }
 
@@ -234,15 +270,17 @@ extension BluetoothManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         guard let characteristics = service.characteristics else { return }
         for char in characteristics where char.uuid == charUUID {
-            mijiaLog("找到 Characteristic: \(char.uuid)，設定 Notify 並讀取數值...")
+            mijiaLog("找到 Characteristic: \(char.uuid)，單次讀取溫濕度數據 (不開 Notify 以杜絕頻繁喚醒)...")
             targetCharacteristic = char
-            peripheral.setNotifyValue(true, for: char)
+            // 注意：絕對不要呼叫 setNotifyValue(true)，否則硬體會每 6 秒主動發射一次射頻，導致嚴重耗電！
             peripheral.readValue(for: char)
         }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard characteristic.uuid == charUUID, let data = characteristic.value, data.count >= 5 else { return }
+        connectTimeoutTimer?.invalidate()
+        connectTimeoutTimer = nil
 
         let tempRaw = Int16(data[0]) | (Int16(data[1]) << 8)
         let temp = Double(tempRaw) / 100.0
@@ -264,12 +302,21 @@ extension BluetoothManager: CBPeripheralDelegate {
             rssi: nil,
             deviceName: peripheral.name ?? "米家溫濕度計 2",
             lastUpdated: Date(),
-            mode: "原廠直連模式"
+            mode: "原廠直連 (即連即斷省電模式)"
         )
 
         currentReading = reading
         delegate?.didUpdateReading(reading)
         saveStatusJSON(status: "已連線運作中")
+
+        // ★★★ 極致省電核心機制 ★★★
+        // 讀取完畢後，立刻主動斷開 BLE GATT 連線！
+        // 讓硬體 TLSR8251 晶片立刻進入 Deep Sleep 休眠模式，耗電瞬間從 150µA 降至 15µA！
+        // 鈕扣電池 CR2032 負載消失，電壓會逐漸回彈，不再發生劇烈掉電！
+        isSleepingBetweenPolls = true
+        mijiaLog("數據讀取完成，立刻主動斷開連線以讓硬體休眠省電 (下次連線間隔: \(Int(refreshInterval)) 秒)...")
+        centralManager.cancelPeripheralConnection(peripheral)
+        planNextPoll()
     }
 }
 

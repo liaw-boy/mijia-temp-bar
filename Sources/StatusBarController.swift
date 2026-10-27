@@ -401,10 +401,8 @@ final class StatusBarController: NSObject {
 
     @objc private func handleRefresh() {
         statusItem.isVisible = true
-        statusItem.button?.image = nil
-        statusItem.button?.title = "🌡️ 重新搜尋中..."
-        statusMenuItem.title = "狀態: 正在重新整理..."
-        bluetoothManager.restart()
+        statusMenuItem.title = "狀態: 正在連線重新整理..."
+        bluetoothManager.manualRefresh()
     }
 
     @objc private func setDisplayStatsBadge() {
