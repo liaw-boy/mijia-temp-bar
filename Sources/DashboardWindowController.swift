@@ -3,14 +3,14 @@ import AppKit
 final class DashboardWindowController: NSWindowController {
     static let shared = DashboardWindowController()
 
-    // UI 元件
+    // 頂部列元件
     private var deviceImageView: NSImageView!
     private var titleLabel: NSTextField!
     private var modelBadgeLabel: NSTextField!
     private var statusDotLabel: NSTextField!
     private var lastUpdateLabel: NSTextField!
 
-    // 數值卡片元件
+    // 三大指標卡片元件
     private var tempValueLabel: NSTextField!
     private var tempSubLabel: NSTextField!
     private var humValueLabel: NSTextField!
@@ -18,7 +18,7 @@ final class DashboardWindowController: NSWindowController {
     private var batValueLabel: NSTextField!
     private var batSubLabel: NSTextField!
 
-    // 圖表區
+    // 圖表與分頁
     private var segmentedControl: NSSegmentedControl!
     private var chartView: ChartView!
     private var pointsCountLabel: NSTextField!
@@ -27,7 +27,7 @@ final class DashboardWindowController: NSWindowController {
 
     convenience init() {
         let win = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 750, height: 650),
+            contentRect: NSRect(x: 0, y: 0, width: 730, height: 580),
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -53,28 +53,23 @@ final class DashboardWindowController: NSWindowController {
         visualEffect.state = .active
         win.contentView = visualEffect
 
-        let container = NSView(frame: NSRect(x: 24, y: 20, width: 702, height: 605))
+        let container = NSView(frame: NSRect(x: 24, y: 20, width: 682, height: 535))
         visualEffect.addSubview(container)
 
-        // 1. 頂部設備卡片 (Hero Card: 702 x 100)
-        let headerCard = NSView(frame: NSRect(x: 0, y: 505, width: 702, height: 100))
-        headerCard.wantsLayer = true
-        headerCard.layer?.cornerRadius = 16
-        headerCard.layer?.backgroundColor = NSColor(red: 0.11, green: 0.12, blue: 0.16, alpha: 0.85).cgColor
-        headerCard.layer?.borderWidth = 1.0
-        headerCard.layer?.borderColor = NSColor(white: 1.0, alpha: 0.10).cgColor
-        container.addSubview(headerCard)
+        // 1. 簡潔頂部工具列 (Header Bar: 682 x 46, Y: 485)
+        let headerBar = NSView(frame: NSRect(x: 0, y: 485, width: 682, height: 46))
+        container.addSubview(headerBar)
 
-        // 設備圖片 (透明懸浮投影卡片: 78x78)
-        let imgPedestal = NSView(frame: NSRect(x: 12, y: 11, width: 78, height: 78))
-        imgPedestal.wantsLayer = true
-        imgPedestal.layer?.cornerRadius = 14
-        imgPedestal.layer?.backgroundColor = NSColor(white: 0.05, alpha: 0.6).cgColor
-        imgPedestal.layer?.borderWidth = 1.0
-        imgPedestal.layer?.borderColor = NSColor(white: 1.0, alpha: 0.12).cgColor
-        headerCard.addSubview(imgPedestal)
+        // 硬體縮圖 (34x34)
+        let imgBox = NSView(frame: NSRect(x: 0, y: 6, width: 34, height: 34))
+        imgBox.wantsLayer = true
+        imgBox.layer?.cornerRadius = 8
+        imgBox.layer?.backgroundColor = NSColor(white: 0.12, alpha: 0.8).cgColor
+        imgBox.layer?.borderWidth = 1.0
+        imgBox.layer?.borderColor = NSColor(white: 1.0, alpha: 0.12).cgColor
+        headerBar.addSubview(imgBox)
 
-        deviceImageView = NSImageView(frame: NSRect(x: 4, y: 4, width: 70, height: 70))
+        deviceImageView = NSImageView(frame: NSRect(x: 2, y: 2, width: 30, height: 30))
         deviceImageView.imageScaling = .scaleProportionallyUpOrDown
         if let bundledImgPath = Bundle.main.path(forResource: "device", ofType: "png"),
            let img = NSImage(contentsOfFile: bundledImgPath) {
@@ -82,53 +77,52 @@ final class DashboardWindowController: NSWindowController {
         } else if let localImg = NSImage(contentsOfFile: "/Users/boywei/project_code/mijia-temp-bar/Resources/device.png") {
             deviceImageView.image = localImg
         }
-        imgPedestal.addSubview(deviceImageView)
+        imgBox.addSubview(deviceImageView)
 
-        // 設備標題與型號
+        // 標題與標籤
         titleLabel = NSTextField(labelWithString: "米家藍牙溫濕度計 2")
-        titleLabel.frame = NSRect(x: 104, y: 62, width: 280, height: 24)
-        titleLabel.font = NSFont.systemFont(ofSize: 18, weight: .bold)
-        headerCard.addSubview(titleLabel)
+        titleLabel.frame = NSRect(x: 44, y: 22, width: 170, height: 20)
+        titleLabel.font = NSFont.systemFont(ofSize: 15, weight: .bold)
+        headerBar.addSubview(titleLabel)
 
-        // 膠囊標籤 (Model & Mode)
-        modelBadgeLabel = NSTextField(labelWithString: "LYWSD03MMC  ·  原廠直連 (秒讀休眠)")
-        modelBadgeLabel.frame = NSRect(x: 104, y: 38, width: 340, height: 18)
-        modelBadgeLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
+        modelBadgeLabel = NSTextField(labelWithString: "LYWSD03MMC")
+        modelBadgeLabel.frame = NSRect(x: 218, y: 23, width: 85, height: 16)
+        modelBadgeLabel.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .semibold)
         modelBadgeLabel.textColor = NSColor(red: 0.35, green: 0.75, blue: 1.0, alpha: 1.0)
-        headerCard.addSubview(modelBadgeLabel)
+        headerBar.addSubview(modelBadgeLabel)
 
-        statusDotLabel = NSTextField(labelWithString: "● 正常運作中 (休眠省電模式)")
-        statusDotLabel.frame = NSRect(x: 104, y: 16, width: 260, height: 16)
-        statusDotLabel.font = NSFont.systemFont(ofSize: 11.5, weight: .medium)
+        statusDotLabel = NSTextField(labelWithString: "● 連線正常 (省電輪詢模式)")
+        statusDotLabel.frame = NSRect(x: 44, y: 4, width: 200, height: 16)
+        statusDotLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
         statusDotLabel.textColor = NSColor(red: 0.25, green: 0.88, blue: 0.50, alpha: 1.0)
-        headerCard.addSubview(statusDotLabel)
+        headerBar.addSubview(statusDotLabel)
 
-        // 右側功能按鈕
-        let refreshButton = NSButton(frame: NSRect(x: 574, y: 54, width: 116, height: 32))
-        refreshButton.title = "⟳ 立即刷新 (⌘R)"
+        // 右側按鈕與最後讀取時間
+        let refreshButton = NSButton(frame: NSRect(x: 582, y: 12, width: 100, height: 26))
+        refreshButton.title = "⟳ 立即刷新"
         refreshButton.bezelStyle = .rounded
         refreshButton.target = self
         refreshButton.action = #selector(handleRefreshClicked)
-        headerCard.addSubview(refreshButton)
+        headerBar.addSubview(refreshButton)
 
-        let exportButton = NSButton(frame: NSRect(x: 574, y: 16, width: 116, height: 32))
-        exportButton.title = "⤓ 匯出 CSV..."
+        let exportButton = NSButton(frame: NSRect(x: 480, y: 12, width: 96, height: 26))
+        exportButton.title = "⤓ 匯出 CSV"
         exportButton.bezelStyle = .rounded
         exportButton.target = self
         exportButton.action = #selector(handleExportCSV)
-        headerCard.addSubview(exportButton)
+        headerBar.addSubview(exportButton)
 
-        lastUpdateLabel = NSTextField(labelWithString: "最後讀取: --:--:--")
-        lastUpdateLabel.frame = NSRect(x: 370, y: 16, width: 190, height: 16)
-        lastUpdateLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .regular)
+        lastUpdateLabel = NSTextField(labelWithString: "最後讀取: --:--")
+        lastUpdateLabel.frame = NSRect(x: 320, y: 17, width: 150, height: 16)
+        lastUpdateLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         lastUpdateLabel.alignment = .right
-        lastUpdateLabel.textColor = NSColor(white: 0.6, alpha: 1.0)
-        headerCard.addSubview(lastUpdateLabel)
+        lastUpdateLabel.textColor = NSColor(white: 0.55, alpha: 1.0)
+        headerBar.addSubview(lastUpdateLabel)
 
-        // 2. 中間三大指標卡片 (3 Cards: Temp, Hum, Bat: 226 x 112)
-        let cardW: CGFloat = 226
-        let cardH: CGFloat = 112
-        let cardY: CGFloat = 378
+        // 2. 中間三大指標卡片 (3 Cards: Temp, Hum, Bat: 220 x 100, Y: 365)
+        let cardW: CGFloat = 220
+        let cardH: CGFloat = 100
+        let cardY: CGFloat = 365
 
         // 卡片 1：溫度
         let (card1, tVal, tSub) = makeMetricCard(
@@ -136,7 +130,7 @@ final class DashboardWindowController: NSWindowController {
             icon: "🌡️", category: "TEMPERATURE · 溫度",
             accentColor: NSColor(red: 1.0, green: 0.48, blue: 0.12, alpha: 1.0),
             bgTint: NSColor(red: 1.0, green: 0.45, blue: 0.10, alpha: 0.08),
-            borderTint: NSColor(red: 1.0, green: 0.48, blue: 0.12, alpha: 0.28)
+            borderTint: NSColor(red: 1.0, green: 0.48, blue: 0.12, alpha: 0.25)
         )
         container.addSubview(card1)
         tempValueLabel = tVal
@@ -144,11 +138,11 @@ final class DashboardWindowController: NSWindowController {
 
         // 卡片 2：濕度
         let (card2, hVal, hSub) = makeMetricCard(
-            x: 238, y: cardY, w: cardW, h: cardH,
+            x: 231, y: cardY, w: cardW, h: cardH,
             icon: "💧", category: "HUMIDITY · 相對濕度",
             accentColor: NSColor(red: 0.05, green: 0.68, blue: 1.0, alpha: 1.0),
             bgTint: NSColor(red: 0.05, green: 0.60, blue: 0.95, alpha: 0.08),
-            borderTint: NSColor(red: 0.05, green: 0.68, blue: 1.0, alpha: 0.28)
+            borderTint: NSColor(red: 0.05, green: 0.68, blue: 1.0, alpha: 0.25)
         )
         container.addSubview(card2)
         humValueLabel = hVal
@@ -156,21 +150,21 @@ final class DashboardWindowController: NSWindowController {
 
         // 卡片 3：電池電量
         let (card3, bVal, bSub) = makeMetricCard(
-            x: 476, y: cardY, w: cardW, h: cardH,
+            x: 462, y: cardY, w: cardW, h: cardH,
             icon: "🔋", category: "BATTERY · 電池狀態",
             accentColor: NSColor(red: 0.10, green: 0.88, blue: 0.52, alpha: 1.0),
             bgTint: NSColor(red: 0.10, green: 0.80, blue: 0.45, alpha: 0.08),
-            borderTint: NSColor(red: 0.10, green: 0.88, blue: 0.52, alpha: 0.28)
+            borderTint: NSColor(red: 0.10, green: 0.88, blue: 0.52, alpha: 0.25)
         )
         container.addSubview(card3)
         batValueLabel = bVal
         batSubLabel = bSub
 
-        // 3. 底部圖表區塊 (702 x 365)
-        let chartHeaderY: CGFloat = 338
+        // 3. 底部圖表區塊 (682 x 340)
+        let chartHeaderY: CGFloat = 328
         let chartLabel = NSTextField(labelWithString: "歷史趨勢折線圖")
-        chartLabel.frame = NSRect(x: 2, y: chartHeaderY, width: 140, height: 22)
-        chartLabel.font = NSFont.systemFont(ofSize: 14.5, weight: .bold)
+        chartLabel.frame = NSRect(x: 2, y: chartHeaderY, width: 130, height: 22)
+        chartLabel.font = NSFont.systemFont(ofSize: 14, weight: .bold)
         container.addSubview(chartLabel)
 
         segmentedControl = NSSegmentedControl(
@@ -179,18 +173,18 @@ final class DashboardWindowController: NSWindowController {
             target: self,
             action: #selector(handleSegmentChanged)
         )
-        segmentedControl.frame = NSRect(x: 146, y: chartHeaderY - 2, width: 390, height: 26)
+        segmentedControl.frame = NSRect(x: 135, y: chartHeaderY - 2, width: 380, height: 26)
         segmentedControl.selectedSegment = 0
         container.addSubview(segmentedControl)
 
         pointsCountLabel = NSTextField(labelWithString: "共 0 個採樣點")
-        pointsCountLabel.frame = NSRect(x: 546, y: chartHeaderY, width: 154, height: 20)
-        pointsCountLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .medium)
+        pointsCountLabel.frame = NSRect(x: 520, y: chartHeaderY, width: 162, height: 20)
+        pointsCountLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
         pointsCountLabel.alignment = .right
-        pointsCountLabel.textColor = NSColor(white: 0.65, alpha: 1.0)
+        pointsCountLabel.textColor = NSColor(white: 0.60, alpha: 1.0)
         container.addSubview(pointsCountLabel)
 
-        chartView = ChartView(frame: NSRect(x: 0, y: 0, width: 702, height: 326))
+        chartView = ChartView(frame: NSRect(x: 0, y: 0, width: 682, height: 316))
         container.addSubview(chartView)
 
         reloadData()
@@ -203,48 +197,42 @@ final class DashboardWindowController: NSWindowController {
     ) -> (NSView, NSTextField, NSTextField) {
         let card = NSView(frame: NSRect(x: x, y: y, width: w, height: h))
         card.wantsLayer = true
-        card.layer?.cornerRadius = 16
+        card.layer?.cornerRadius = 14
         card.layer?.backgroundColor = bgTint.cgColor
         card.layer?.borderWidth = 1.0
         card.layer?.borderColor = borderTint.cgColor
 
-        // 頂部分類微標籤
         let headerLabel = NSTextField(labelWithString: "\(icon) \(category)")
-        headerLabel.frame = NSRect(x: 16, y: h - 28, width: w - 32, height: 18)
-        headerLabel.font = NSFont.systemFont(ofSize: 11, weight: .bold)
+        headerLabel.frame = NSRect(x: 14, y: h - 26, width: w - 28, height: 16)
+        headerLabel.font = NSFont.systemFont(ofSize: 10.5, weight: .bold)
         headerLabel.textColor = accentColor.withAlphaComponent(0.9)
         card.addSubview(headerLabel)
 
-        // 核心巨型數值 (34pt)
         let valLabel = NSTextField(labelWithString: "--")
-        valLabel.frame = NSRect(x: 14, y: 38, width: w - 28, height: 42)
-        valLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 34, weight: .bold)
+        valLabel.frame = NSRect(x: 12, y: 32, width: w - 24, height: 38)
+        valLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 32, weight: .bold)
         valLabel.textColor = accentColor
         card.addSubview(valLabel)
 
-        // 底部輔助指標
         let subLabel = NSTextField(labelWithString: "載入中...")
-        subLabel.frame = NSRect(x: 16, y: 12, width: w - 32, height: 18)
-        subLabel.font = NSFont.systemFont(ofSize: 11.5, weight: .medium)
-        subLabel.textColor = NSColor(white: 0.75, alpha: 1.0)
+        subLabel.frame = NSRect(x: 14, y: 10, width: w - 28, height: 16)
+        subLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        subLabel.textColor = NSColor(white: 0.70, alpha: 1.0)
         card.addSubview(subLabel)
 
         return (card, valLabel, subLabel)
     }
 
     func updateReading(_ r: SensorReading) {
-        // 溫度數值 (無多餘空格)
         tempValueLabel.stringValue = String(format: "%.1f°C", r.temperature)
         let minT = HistoryManager.shared.minTemperature ?? r.temperature
         let maxT = HistoryManager.shared.maxTemperature ?? r.temperature
         tempSubLabel.stringValue = String(format: "↓ 最低 %.1f°    ↑ 最高 %.1f°", minT, maxT)
 
-        // 濕度數值
         humValueLabel.stringValue = String(format: "%.0f%%", r.humidity)
         let comfort = (r.humidity >= 40 && r.humidity <= 65) ? "舒適度：適宜 (Comfortable) 😊" : (r.humidity > 65 ? "濕度偏高 (Humid) 💧" : "空氣乾燥 (Dry) 🏜️")
         humSubLabel.stringValue = comfort
 
-        // 電池電量
         batValueLabel.stringValue = String(format: "%d%%", r.batteryPercent)
         batSubLabel.stringValue = String(format: "即時電壓 %.3f V · 狀態穩定", r.voltage)
 
