@@ -1,71 +1,111 @@
-# MijiaTempBar (米家溫濕度計 2 macOS 狀態列監控工具)
+# MijiaTempBar 🌡️💧
 
-專為 **小米/米家藍牙溫濕度計 2 (LYWSD03MMC)** 設計的 macOS 原生狀態列 (Menu Bar) 工具。
+[![Release](https://img.shields.io/github/v/release/liaw-boy/mijia-temp-bar?color=blue&logo=github)](https://github.com/liaw-boy/mijia-temp-bar/releases)
+[![Platform](https://img.shields.io/badge/platform-macOS%2012.0%2B-lightgrey?logo=apple)](https://www.apple.com/macos/)
+[![Swift](https://img.shields.io/badge/Swift-6.0%2B-orange?logo=swift)](https://swift.org/)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-![macOS 12+](https://img.shields.io/badge/macOS-12.0%2B-blue)
-![Swift 6.0+](https://img.shields.io/badge/Swift-6.0%2B-orange)
-![License](https://img.shields.io/badge/license-MIT-green)
+專為 **小米 / 米家藍牙溫濕度計 2（LYWSD03MMC）** 打造的極致原生 macOS 狀態列（Menu Bar）監控工具。
 
----
-
-## 🌟 功能特點
-
-- **零依賴、純原生**：使用 Swift + 原生 `CoreBluetooth` 與 `AppKit` 打造，不需安裝 Python、Homebrew 或任何第三方函式庫。
-- **Stats / iStat 風格雙行膠囊**：
-  - 頂天立地吃滿 24pt 選單列高度，字體超大、超清晰。
-  - 上排：`[TMP]` 暖橙色圓角膠囊 ＋ 即時溫度數值。
-  - 下排：`[HUM]` 湛藍色圓角膠囊 ＋ 即時濕度數值。
-  - 橫向寬度僅約 40px，極致節省 MacBook 瀏海螢幕的選單列空間。
-- **雙模式智慧支援**：
-  - **原廠韌體直連模式**：出廠原裝免刷機，開機自動搜尋 GATT 數值。
-  - **開源廣播模式**：自動偵測並相容 ATC / pvvx / BTHome 開源廣播封包。
-- **連線間隔自選**：
-  - 支援 30 秒（即時模式）、1 分鐘、3 分鐘、5 分鐘（推薦省電）、10 分鐘（極致省電）彈性切換。
-- **智慧隱藏與自動重連**：
-  - 「僅連線時顯示」：離家 / 斷線時自動完全隱藏圖示，返家進入藍牙範圍秒級自動重連並浮現。
-- **Google Stitch「Vibe Design」專屬 App 圖示**：
-  - 採用 Tech Noir 黑曜石底板 ＋ 雙向漫射霓虹光暈 ＋ 懸浮氣候膠囊設計，質感卓越。
+採用與知名 macOS 系統監控工具 **[Stats](https://github.com/exelban/stats)** 相同的上下雙行膠囊設計，頂天立地吃滿選單列空間，兼顧大字體與極致橫向省空間。
 
 ---
 
-## 🚀 安裝與啟動
-
-### 1. 編譯與打包
-在終端機執行專案內的打包腳本：
-```bash
-./bundle.sh
+```text
+┌─────────────────────────┐
+│  [TMP] 24.5°            │  <-- 上排：暖橙色圓角膠囊 TMP ＋ 即時溫度
+│  [HUM] 68%              │  <-- 下排：湛藍色圓角膠囊 HUM ＋ 即時濕度
+└─────────────────────────┘
+      (寬度僅約 40px，極致節省瀏海螢幕選單列空間)
 ```
-建置完成後會生成 `MijiaTempBar.app`。
 
-### 2. 啟動應用程式
+---
+
+## 🌟 功能亮點 (Key Features)
+
+- **Stats 風格雙行微型膠囊**：
+  - 完美適配 macOS 現代選單列 24.0pt 高度，上下完全貼滿。
+  - 字體放大至 **11.2 pt 粗體**，坐在辦公桌前遠遠一眼即看清。
+  - 橫向寬度僅約 **40 像素**，絲毫不擠壓 MacBook 瀏海螢幕兩側的空間。
+- **純原生極速、零依賴**：
+  - 基於純 Swift 與 macOS 系統原生 `CoreBluetooth` + `AppKit` 打造。
+  - **不需要** 安裝 Python、Node.js、Homebrew 或任何第三方 Runtime，下載即用。
+- **原廠與開源雙模式自動相容**：
+  - **原廠出廠韌體**：免刷機、出廠即用，直接透過 BLE GATT 協議讀取。
+  - **開源自製韌體**：自動嗅探並解析 ATC / pvvx / BTHome 格式的未加密廣播。
+- **彈性可調連線間隔（省電自選）**：
+  - 支援從選單直接切換：
+    - `30 秒`：即時更新模式（即時性最高，連線負載較重）
+    - `1 分鐘` / `3 分鐘`：平衡模式
+    - `5 分鐘`：**推薦省電模式**（電池可維持約 9～10 個月）
+    - `10 分鐘`：極致省電模式（電池可使用 10 個月以上）
+- **智慧隱藏與自動秒連**：
+  - 開啟「僅連線時顯示」功能後，帶著筆電出門或超出藍牙範圍時，圖示會**自動完全隱藏**，保持桌面乾淨。
+  - 回到房間進入藍牙範圍，數秒內**自動無感重連並重新浮現**。
+- **Google Stitch「Vibe Design」專屬 App 圖示**：
+  - 摒棄廉價塑膠白盒造型，採用 Google Labs Stitch 的 Tech Noir 黑曜石底板 ＋ 雙向漫射霓虹光暈 ＋ 懸浮氣候膠囊設計。
+
+---
+
+## 📥 下載與安裝 (Installation)
+
+### 方式 1：直接下載發行版本（最推薦）
+1. 前往 **[Releases 頁面](https://github.com/liaw-boy/mijia-temp-bar/releases)** 下載最新版 `MijiaTempBar-v1.0.0-macos.zip`。
+2. 解壓縮後將 `MijiaTempBar.app` 拖入 `/Applications`（應用程式）資料夾。
+3. 雙擊啟動即可！（首次啟動若系統跳出「想使用藍牙」，請點擊允許）。
+
+### 方式 2：從原始碼自行編譯 (Build from Source)
 ```bash
+git clone https://github.com/liaw-boy/mijia-temp-bar.git
+cd mijia-temp-bar
+./bundle.sh
 open MijiaTempBar.app
 ```
-*(首次啟動時，若系統提示「MijiaTempBar 想使用藍牙」，請點擊允許)*
 
-### 3. 設定開機自動啟動 (選用)
+---
+
+## ⚙️ 開機自動啟動 (Launch at Login)
+
+若希望每次開機自動在狀態列顯示：
 1. 打開 Mac **系統設定** > **一般** > **登入項目與擴充功能**。
-2. 在「登入時打開」列表中點擊 `+` 號。
+2. 在「**登入時打開**」區域點擊 `+` 號。
 3. 選取本專案的 `MijiaTempBar.app` 即可。
 
 ---
 
-## 🛠️ 技術架構
+## 🏷️ 支援硬體規格 (Supported Hardware)
+
+| 設備型號 | 官方名稱 | 支援方式 |
+| :--- | :--- | :--- |
+| **LYWSD03MMC** | 米家藍牙溫濕度計 2 (代工廠：秒秒測) | **完全支援**（原廠出廠 / 開源韌體雙模） |
+| **MJWSD05MMC** | 米家溫濕度計 3 代 | 開源廣播模式完全相容 |
+| **MHO-C401** | 秒秒測電子墨水屏溫濕度計 | 開源廣播模式完全相容 |
+| **CGG1 / CGDK2** | 青萍藍牙溫濕度計系列 | 開源廣播模式完全相容 |
+
+> **名詞解析（什麼是 LYWSD03MMC？）**：  
+> `LYWSD03MMC` 是小米官方出廠在機身背面與藍牙廣播中所使用的正式硬體型號代碼：  
+> `L`（藍牙 BLE）+ `Y`（溫）+ `W`（濕）+ `S`（感測器 Sensor）+ `D`（螢幕/電池 Display）+ `03`（第3代專案代號）+ `MMC`（小米生態鏈原廠製造商：北京秒秒測科技有限公司 Miaomiaoce）。  
+> 全世界出廠的每一台「米家藍牙溫濕度計 2」都具備這個名稱。
+
+---
+
+## 🛠️ 專案檔案結構 (Project Structure)
 
 ```
 mijia-temp-bar/
 ├── Sources/
-│   ├── main.swift              # AppKit 進入點與生命週期管理
-│   ├── StatusBarController.swift# 狀態列 UI、Stats 雙行膠囊繪製、選單事件
-│   ├── BluetoothManager.swift  # CoreBluetooth 藍牙搜尋、GATT 連線、廣播解碼
-│   └── Logger.swift            # 輕量除錯日誌
-├── generate_icon.swift         # Google Stitch 風格 AppIcon 渲染器
-├── bundle.sh                   # 一鍵編譯與打包腳本
+│   ├── main.swift              # AppKit 生命週期與常駐模式進入點
+│   ├── StatusBarController.swift# 狀態列介面、Stats 雙行膠囊渲染、下拉選單
+│   ├── BluetoothManager.swift  # CoreBluetooth 藍牙搜尋、GATT 連線、廣播解析
+│   └── Logger.swift            # 輕量本機除錯日誌 (/tmp/mijia_temp_bar.log)
+├── generate_icon.swift         # Google Stitch Vibe Design 原生圖示生成腳本
+├── bundle.sh                   # 一鍵編譯、資源打包與 Ad-hoc 本機簽名腳本
+├── LICENSE                     # MIT 開源授權
 └── README.md
 ```
 
 ---
 
-## 📄 開源授權
+## 📄 授權條款 (License)
 
-本專案採用 [MIT License](LICENSE) 授權。
+本專案採用 [MIT License](LICENSE) 授權開放原始碼。
