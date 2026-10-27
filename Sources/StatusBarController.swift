@@ -29,6 +29,7 @@ final class StatusBarController: NSObject {
     private var hideWhenDisconnectedMenuItem: NSMenuItem!
     private var intervalSubMenu: NSMenu!
     private var customIntervalMenuItem: NSMenuItem!
+    private var dashboardController: DashboardWindowController?
 
     override init() {
         super.init()
@@ -82,13 +83,18 @@ final class StatusBarController: NSObject {
         let menu = NSMenu()
         menu.autoenablesItems = false
 
-        headerMenuItem = NSMenuItem(title: "米家藍牙溫濕度計 2", action: nil, keyEquivalent: "")
-        headerMenuItem.isEnabled = false
+        headerMenuItem = NSMenuItem(title: "米家藍牙溫濕度計 2", action: #selector(showDashboard), keyEquivalent: "")
+        headerMenuItem.target = self
+        headerMenuItem.isEnabled = true
         headerMenuItem.attributedTitle = NSAttributedString(
             string: "米家藍牙溫濕度計 2",
             attributes: [.font: NSFont.boldSystemFont(ofSize: 13)]
         )
         menu.addItem(headerMenuItem)
+
+        let openDashboardItem = NSMenuItem(title: "📊 開啟即時儀表板與歷史圖表 (⌘D)...", action: #selector(showDashboard), keyEquivalent: "d")
+        openDashboardItem.target = self
+        menu.addItem(openDashboardItem)
 
         statusMenuItem = NSMenuItem(title: "狀態: 正在搜尋藍牙設備...", action: nil, keyEquivalent: "")
         statusMenuItem.isEnabled = false
@@ -451,6 +457,23 @@ final class StatusBarController: NSObject {
         }
     }
 
+    @objc private func showDashboard() {
+        if dashboardController == nil {
+            dashboardController = DashboardWindowController.shared
+            dashboardController?.onRefreshRequested = { [weak self] in
+                self?.bluetoothManager.manualRefresh()
+            }
+        }
+        if let r = bluetoothManager.currentReading {
+            dashboardController?.updateReading(r)
+        } else {
+            dashboardController?.reloadData()
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        dashboardController?.showWindow(nil)
+        dashboardController?.window?.makeKeyAndOrderFront(nil)
+    }
+
     @objc private func handleRefresh() {
         statusItem.isVisible = true
         statusMenuItem.title = "狀態: 正在連線重新整理..."
@@ -541,6 +564,15 @@ extension StatusBarController: BluetoothManagerDelegate {
         formatter.dateFormat = "HH:mm:ss"
         timeMenuItem.title = "最後更新: \(formatter.string(from: reading.lastUpdated))"
         statusMenuItem.title = "狀態: 正常運作中"
+
+        // 記錄歷史數據並同步儀表板
+        HistoryManager.shared.addPoint(
+            temp: reading.temperature,
+            hum: reading.humidity,
+            volt: reading.voltage,
+            battery: reading.batteryPercent
+        )
+        dashboardController?.updateReading(reading)
     }
 
     func didFailWithError(_ error: String) {

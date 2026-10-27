@@ -23,6 +23,9 @@ mkdir -p "$APP/Contents/Resources"
 
 cp MijiaTempBar "$APP/Contents/MacOS/"
 cp AppIcon.icns "$APP/Contents/Resources/"
+if [ -f "Resources/device.png" ]; then
+    cp Resources/device.png "$APP/Contents/Resources/"
+fi
 
 cat > "$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -42,7 +45,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
+    <string>1.1.0</string>
     <key>LSMinimumSystemVersion</key>
     <string>12.0</string>
     <key>LSUIElement</key>
