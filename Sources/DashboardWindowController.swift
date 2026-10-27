@@ -174,17 +174,17 @@ final class DashboardWindowController: NSWindowController {
         container.addSubview(chartLabel)
 
         segmentedControl = NSSegmentedControl(
-            labels: ["🌡️ 溫度走勢", "💧 濕度走勢", "🔋 電壓回彈"],
+            labels: ["📊 綜合總覽", "🌡️ 溫度走勢", "💧 濕度走勢", "🔋 電壓回彈"],
             trackingMode: .selectOne,
             target: self,
             action: #selector(handleSegmentChanged)
         )
-        segmentedControl.frame = NSRect(x: 150, y: chartHeaderY - 2, width: 330, height: 26)
+        segmentedControl.frame = NSRect(x: 146, y: chartHeaderY - 2, width: 390, height: 26)
         segmentedControl.selectedSegment = 0
         container.addSubview(segmentedControl)
 
         pointsCountLabel = NSTextField(labelWithString: "共 0 個採樣點")
-        pointsCountLabel.frame = NSRect(x: 500, y: chartHeaderY, width: 200, height: 20)
+        pointsCountLabel.frame = NSRect(x: 546, y: chartHeaderY, width: 154, height: 20)
         pointsCountLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .medium)
         pointsCountLabel.alignment = .right
         pointsCountLabel.textColor = NSColor(white: 0.65, alpha: 1.0)
@@ -263,9 +263,10 @@ final class DashboardWindowController: NSWindowController {
 
     @objc private func handleSegmentChanged() {
         switch segmentedControl.selectedSegment {
-        case 0: chartView.dataType = .temperature
-        case 1: chartView.dataType = .humidity
-        case 2: chartView.dataType = .voltage
+        case 0: chartView.dataType = .overview
+        case 1: chartView.dataType = .temperature
+        case 2: chartView.dataType = .humidity
+        case 3: chartView.dataType = .voltage
         default: break
         }
     }
