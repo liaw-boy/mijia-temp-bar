@@ -2,6 +2,7 @@
 
 [![Release](https://img.shields.io/github/v/release/liaw-boy/mijia-temp-bar?color=blue&logo=github)](https://github.com/liaw-boy/mijia-temp-bar/releases)
 [![Platform](https://img.shields.io/badge/platform-macOS%2012.0%2B-lightgrey?logo=apple)](https://www.apple.com/macos/)
+[![Linux](https://img.shields.io/badge/platform-Linux-lightgrey?logo=linux)](linux/README.md)
 [![Swift](https://img.shields.io/badge/Swift-6.0%2B-orange?logo=swift)](https://swift.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -71,6 +72,14 @@ cd mijia-temp-bar
 open MijiaTempBar.app
 ```
 
+### 🐧 Linux 版本
+Linux 版（Python + GTK + AppIndicator，透過 BlueZ 讀取藍牙）位於 [`linux/`](linux/README.md) 目錄，功能與 macOS 版相同：
+```bash
+cd mijia-temp-bar/linux
+./install.sh
+```
+詳細需求與說明請見 **[linux/README.md](linux/README.md)**。
+
 ---
 
 ## ⚙️ 開機自動啟動 (Launch at Login)
@@ -109,6 +118,7 @@ mijia-temp-bar/
 │   └── Logger.swift            # 輕量本機除錯日誌 (/tmp/mijia_temp_bar.log)
 ├── generate_icon.swift         # Google Stitch Vibe Design 原生圖示生成腳本
 ├── bundle.sh                   # 一鍵編譯、資源打包與 Ad-hoc 本機簽名腳本
+├── linux/                      # Linux 版 (Python + GTK + AppIndicator + BlueZ)
 ├── LICENSE                     # MIT 開源授權
 └── README.md
 ```
