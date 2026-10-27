@@ -28,6 +28,7 @@ final class StatusBarController: NSObject {
     private var modeMenuItem: NSMenuItem!
     private var hideWhenDisconnectedMenuItem: NSMenuItem!
     private var intervalSubMenu: NSMenu!
+    private var customIntervalMenuItem: NSMenuItem!
 
     override init() {
         super.init()
@@ -124,11 +125,15 @@ final class StatusBarController: NSObject {
         // 連線間隔 / 更新頻率子選單
         intervalSubMenu = NSMenu()
         let intervals: [(String, Double)] = [
-            ("30 秒 (即時更新 - 較耗電)", 30.0),
+            ("30 秒 (即時模式 - 較耗電)", 30.0),
             ("1 分鐘", 60.0),
             ("3 分鐘", 180.0),
-            ("5 分鐘 (推薦省電，電池約 9-10 個月)", 300.0),
-            ("10 分鐘 (極致省電，電池 10+ 個月)", 600.0)
+            ("5 分鐘 (推薦平衡)", 300.0),
+            ("10 分鐘", 600.0),
+            ("15 分鐘", 900.0),
+            ("30 分鐘 (極致省電)", 1800.0),
+            ("1 小時 (超省電休眠，續航 1 年+)", 3600.0),
+            ("2 小時", 7200.0)
         ]
         for (title, sec) in intervals {
             let item = NSMenuItem(title: title, action: #selector(handleSelectInterval(_:)), keyEquivalent: "")
@@ -136,6 +141,10 @@ final class StatusBarController: NSObject {
             item.representedObject = sec
             intervalSubMenu.addItem(item)
         }
+        intervalSubMenu.addItem(NSMenuItem.separator())
+        customIntervalMenuItem = NSMenuItem(title: "自訂時間 (分鐘)...", action: #selector(handleCustomInterval), keyEquivalent: "")
+        customIntervalMenuItem.target = self
+        intervalSubMenu.addItem(customIntervalMenuItem)
 
         let intervalParentItem = NSMenuItem(title: "連線間隔時間 (更新頻率)", action: nil, keyEquivalent: "")
         intervalParentItem.submenu = intervalSubMenu
@@ -377,12 +386,55 @@ final class StatusBarController: NSObject {
         refreshIntervalMenuChecks()
     }
 
+    @objc private func handleCustomInterval() {
+        let alert = NSAlert()
+        alert.messageText = "自訂更新間隔時間"
+        alert.informativeText = "請輸入更新輪詢間隔（以分鐘為單位）：\n例如輸入 60 代表 1 小時，輸入 120 代表 2 小時。"
+        alert.addButton(withTitle: "確定")
+        alert.addButton(withTitle: "取消")
+
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        let currentMinutes = Int(bluetoothManager.refreshInterval / 60.0)
+        input.stringValue = "\(max(1, currentMinutes))"
+        alert.accessoryView = input
+
+        NSApp.activate(ignoringOtherApps: true)
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            let text = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let mins = Double(text), mins >= 0.5 {
+                let seconds = mins * 60.0
+                bluetoothManager.setRefreshInterval(seconds)
+                refreshIntervalMenuChecks()
+            }
+        }
+    }
+
     private func refreshIntervalMenuChecks() {
         guard let sub = intervalSubMenu else { return }
         let currentSec = bluetoothManager.refreshInterval
+        var matchedPreset = false
         for item in sub.items {
             if let sec = item.representedObject as? Double {
-                item.state = (abs(sec - currentSec) < 0.1) ? .on : .off
+                let isMatch = abs(sec - currentSec) < 0.1
+                item.state = isMatch ? .on : .off
+                if isMatch { matchedPreset = true }
+            }
+        }
+
+        if let customItem = customIntervalMenuItem {
+            customItem.state = matchedPreset ? .off : .on
+            if !matchedPreset {
+                if currentSec >= 3600.0 {
+                    let hrs = currentSec / 3600.0
+                    let formatted = (hrs.truncatingRemainder(dividingBy: 1.0) == 0) ? String(format: "%.0f", hrs) : String(format: "%.1f", hrs)
+                    customItem.title = "自訂時間... (目前: \(formatted) 小時)"
+                } else {
+                    let mins = Int(round(currentSec / 60.0))
+                    customItem.title = "自訂時間... (目前: \(mins) 分鐘)"
+                }
+            } else {
+                customItem.title = "自訂時間 (分鐘)..."
             }
         }
     }
