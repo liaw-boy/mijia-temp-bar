@@ -7,7 +7,7 @@ let fm = FileManager.default
 try? fm.removeItem(atPath: iconsetPath)
 try fm.createDirectory(atPath: iconsetPath, withIntermediateDirectories: true)
 
-/// Google Stitch (Vibe Design / Tech Noir) AppIcon 渲染器
+/// 擬真極簡小米溫濕度計 2 (LYWSD03MMC) Apple 原生質感 AppIcon 渲染器
 func renderIcon(pixelSize: Int) -> Data? {
     let s = CGFloat(pixelSize)
     guard let rep = NSBitmapImageRep(
@@ -28,170 +28,205 @@ func renderIcon(pixelSize: Int) -> Data? {
     ctx.setAllowsAntialiasing(true)
     ctx.setShouldAntialias(true)
 
-    let pad = s * 0.095
+    let pad = s * 0.09
     let rect = CGRect(x: pad, y: pad, width: s - pad * 2, height: s - pad * 2)
     let corner = rect.width * 0.225
     let squircle = CGPath(roundedRect: rect, cornerWidth: corner, cornerHeight: corner, transform: nil)
 
-    // 1. 外部柔和多層立體投影 (Stitch High-Elevation Shadow)
+    let space = CGColorSpaceCreateDeviceRGB()
+
+    // 1. 外部柔和立體投影 (Apple Standard App Elevation Shadow)
     ctx.saveGState()
     ctx.setShadow(
         offset: CGSize(width: 0, height: -s * 0.03),
-        blur: s * 0.06,
-        color: CGColor(red: 0.02, green: 0.03, blue: 0.08, alpha: 0.65)
+        blur: s * 0.055,
+        color: CGColor(red: 0.06, green: 0.10, blue: 0.18, alpha: 0.28)
     )
 
     // 2. 底板裁切
     ctx.addPath(squircle)
     ctx.clip()
 
-    let space = CGColorSpaceCreateDeviceRGB()
-
-    // 3. Google Stitch 經典黑曜石背景 (Tech Noir Dark Gradient: #080B11 -> #131B2A)
+    // 3. 背景漸層：清新典雅的現代 Apple 家居晨光柔和背景 (#F8FAFC -> #E2E8F0)
     let bgColors = [
-        CGColor(red: 0.08, green: 0.11, blue: 0.18, alpha: 1.0),
-        CGColor(red: 0.03, green: 0.04, blue: 0.07, alpha: 1.0)
+        CGColor(red: 0.97, green: 0.98, blue: 1.0, alpha: 1.0),
+        CGColor(red: 0.88, green: 0.91, blue: 0.95, alpha: 1.0)
     ] as CFArray
     let bgGrad = CGGradient(colorsSpace: space, colors: bgColors, locations: [0.0, 1.0])!
-    ctx.drawLinearGradient(bgGrad, start: CGPoint(x: s * 0.1, y: s * 0.9), end: CGPoint(x: s * 0.9, y: s * 0.1), options: [])
+    ctx.drawLinearGradient(bgGrad, start: CGPoint(x: rect.minX, y: rect.maxY), end: CGPoint(x: rect.maxX, y: rect.minY), options: [])
     ctx.restoreGState()
 
-    // 再次進入 squircle 區域繪製內容
+    // 再次進入 squircle 區域繪製主體
     ctx.saveGState()
     ctx.addPath(squircle)
     ctx.clip()
 
-    // 4. Stitch 畫布微型點陣網格紋理 (Subtle AI Canvas Dot Matrix)
-    ctx.saveGState()
-    let gridCount = 9
-    let step = rect.width / CGFloat(gridCount + 1)
-    for xIdx in 1...gridCount {
-        for yIdx in 1...gridCount {
-            let ptX = rect.minX + CGFloat(xIdx) * step
-            let ptY = rect.minY + CGFloat(yIdx) * step
-            // 距離中心越遠越淡
-            let dist = hypot(ptX - s * 0.5, ptY - s * 0.5) / (s * 0.4)
-            let alpha = max(0.0, (1.0 - dist) * 0.10)
-            ctx.setFillColor(CGColor(red: 0.5, green: 0.65, blue: 0.9, alpha: alpha))
-            ctx.addArc(center: CGPoint(x: ptX, y: ptY), radius: s * 0.005, startAngle: 0, endAngle: .pi * 2, clockwise: true)
-            ctx.fillPath()
-        }
-    }
-    ctx.restoreGState()
-
-    // 5. Google Stitch 標誌性「電光藍紫 ＋ 暖橙」雙向霓虹光暈 (Vibe Ambient Neon Glow)
-    // 左側橙粉暖光暈 (Temperature Thermal Glow)
-    let thermalGlow = [
-        CGColor(red: 1.0, green: 0.35, blue: 0.20, alpha: 0.35),
-        CGColor(red: 1.0, green: 0.20, blue: 0.40, alpha: 0.0)
-    ] as CFArray
-    if let g1 = CGGradient(colorsSpace: space, colors: thermalGlow, locations: [0.0, 1.0]) {
-        ctx.drawRadialGradient(g1, startCenter: CGPoint(x: s * 0.35, y: s * 0.62), startRadius: 0, endCenter: CGPoint(x: s * 0.35, y: s * 0.62), endRadius: s * 0.38, options: [])
-    }
-    // 右側電光青藍光暈 (Humidity Cyan Glow)
-    let cyanGlow = [
-        CGColor(red: 0.0, green: 0.85, blue: 1.0, alpha: 0.30),
-        CGColor(red: 0.25, green: 0.40, blue: 1.0, alpha: 0.0)
-    ] as CFArray
-    if let g2 = CGGradient(colorsSpace: space, colors: cyanGlow, locations: [0.0, 1.0]) {
-        ctx.drawRadialGradient(g2, startCenter: CGPoint(x: s * 0.65, y: s * 0.40), startRadius: 0, endCenter: CGPoint(x: s * 0.65, y: s * 0.40), endRadius: s * 0.40, options: [])
-    }
-
-    // 6. 核心設計：Stitch 招牌「懸浮氣候膠囊卡片 (Floating Vibe Capsule)」
-    let cardW = s * 0.52
-    let cardH = s * 0.52
-    let cardRect = CGRect(x: (s - cardW) * 0.5, y: (s - cardH) * 0.5 - s * 0.01, width: cardW, height: cardH)
-    let cardRadius = cardW * 0.35
-    let cardPath = CGPath(roundedRect: cardRect, cornerWidth: cardRadius, cornerHeight: cardRadius, transform: nil)
-
-    // 卡片柔和暗部投影
-    ctx.saveGState()
-    ctx.setShadow(
-        offset: CGSize(width: 0, height: -s * 0.02),
-        blur: s * 0.045,
-        color: CGColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 0.55)
-    )
-    // 毛玻璃卡片半透明底色 (Glassmorphism card)
-    ctx.addPath(cardPath)
-    ctx.setFillColor(CGColor(red: 0.12, green: 0.15, blue: 0.24, alpha: 0.75))
-    ctx.fillPath()
-    ctx.restoreGState()
-
-    // 卡片精緻邊框 (Stitch Signature Gradient Border Stroke)
-    ctx.saveGState()
-    ctx.addPath(cardPath)
-    ctx.setLineWidth(s * 0.016)
-    ctx.setStrokeColor(CGColor(red: 0.35, green: 0.60, blue: 1.0, alpha: 0.35))
-    ctx.strokePath()
-    ctx.restoreGState()
-
-    // 7. 卡片內部核心視覺：Stitch 風格的雙環動態指標 (Dual-Loop Climate Indicator)
-    let iconCenter = CGPoint(x: cardRect.midX, y: cardRect.midY)
-
-    // 7.1 左側熱能環（象徵溫度：橙紅弧線）
-    ctx.saveGState()
-    ctx.setLineWidth(s * 0.048)
-    ctx.setLineCap(.round)
-    ctx.setStrokeColor(CGColor(red: 1.0, green: 0.40, blue: 0.22, alpha: 0.95))
-    ctx.addArc(
-        center: CGPoint(x: iconCenter.x - s * 0.04, y: iconCenter.y + s * 0.03),
-        radius: s * 0.13,
-        startAngle: .pi * 0.2,
-        endAngle: .pi * 1.5,
-        clockwise: false
-    )
-    ctx.strokePath()
-    ctx.restoreGState()
-
-    // 7.2 右側水漾環（象徵濕度：電光青弧線）
-    ctx.saveGState()
-    ctx.setLineWidth(s * 0.048)
-    ctx.setLineCap(.round)
-    ctx.setStrokeColor(CGColor(red: 0.05, green: 0.88, blue: 0.98, alpha: 0.95))
-    ctx.addArc(
-        center: CGPoint(x: iconCenter.x + s * 0.04, y: iconCenter.y - s * 0.03),
-        radius: s * 0.13,
-        startAngle: .pi * 1.2,
-        endAngle: .pi * 0.5,
-        clockwise: false
-    )
-    ctx.strokePath()
-    ctx.restoreGState()
-
-    // 7.3 中心平衡光點 (Stitch Balance Nucleus)
-    ctx.saveGState()
-    ctx.setFillColor(CGColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.95))
-    ctx.setShadow(offset: .zero, blur: s * 0.02, color: CGColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.8))
-    ctx.addArc(center: iconCenter, radius: s * 0.022, startAngle: 0, endAngle: .pi * 2, clockwise: true)
-    ctx.fillPath()
-    ctx.restoreGState()
-
-    // 8. Stitch AI 介面角落十字標記 (Tech Crosshairs)
-    let markLen = s * 0.022
-    let markInset = s * 0.16
-    let corners = [
-        CGPoint(x: rect.minX + markInset, y: rect.minY + markInset),
-        CGPoint(x: rect.maxX - markInset, y: rect.minY + markInset),
-        CGPoint(x: rect.minX + markInset, y: rect.maxY - markInset),
-        CGPoint(x: rect.maxX - markInset, y: rect.maxY - markInset)
-    ]
-    ctx.saveGState()
-    ctx.setStrokeColor(CGColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.22))
-    ctx.setLineWidth(s * 0.008)
-    for c in corners {
-        ctx.move(to: CGPoint(x: c.x - markLen * 0.5, y: c.y))
-        ctx.addLine(to: CGPoint(x: c.x + markLen * 0.5, y: c.y))
-        ctx.move(to: CGPoint(x: c.x, y: c.y - markLen * 0.5))
-        ctx.addLine(to: CGPoint(x: c.x, y: c.y + markLen * 0.5))
-    }
-    ctx.strokePath()
-    ctx.restoreGState()
-
-    // 9. Apple 頂層極細邊緣倒角光 (Bezel Edge Highlight)
+    // 4. 頂部環境柔和高光與邊框倒角
     ctx.saveGState()
     ctx.addPath(squircle)
-    ctx.setLineWidth(s * 0.014)
-    ctx.setStrokeColor(CGColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.18))
+    ctx.setLineWidth(s * 0.012)
+    ctx.setStrokeColor(CGColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.85))
+    ctx.strokePath()
+    ctx.restoreGState()
+
+    // 5. 核心主體：擬真小米米家藍牙溫濕度計 2 (LYWSD03MMC) 純白方形機身
+    let devSize = rect.width * 0.74
+    let devRect = CGRect(
+        x: (s - devSize) * 0.5,
+        y: (s - devSize) * 0.5 - s * 0.005,
+        width: devSize,
+        height: devSize
+    )
+    let devRadius = devSize * 0.18
+    let devPath = CGPath(roundedRect: devRect, cornerWidth: devRadius, cornerHeight: devRadius, transform: nil)
+
+    // 5.1 機身立體陰影 (Ambient + Key Light Dropshadow)
+    ctx.saveGState()
+    ctx.setShadow(
+        offset: CGSize(width: 0, height: -s * 0.022),
+        blur: s * 0.04,
+        color: CGColor(red: 0.12, green: 0.16, blue: 0.25, alpha: 0.22)
+    )
+    ctx.addPath(devPath)
+    ctx.setFillColor(CGColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0))
+    ctx.fillPath()
+    ctx.restoreGState()
+
+    // 5.2 機身微幅啞光白漸層
+    ctx.saveGState()
+    ctx.addPath(devPath)
+    ctx.clip()
+    let bodyColors = [
+        CGColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0),
+        CGColor(red: 0.95, green: 0.96, blue: 0.97, alpha: 1.0)
+    ] as CFArray
+    let bodyGrad = CGGradient(colorsSpace: space, colors: bodyColors, locations: [0.0, 1.0])!
+    ctx.drawLinearGradient(bodyGrad, start: CGPoint(x: devRect.midX, y: devRect.maxY), end: CGPoint(x: devRect.midX, y: devRect.minY), options: [])
+
+    // 機身邊框細線
+    ctx.addPath(devPath)
+    ctx.setLineWidth(s * 0.008)
+    ctx.setStrokeColor(CGColor(red: 0.85, green: 0.88, blue: 0.92, alpha: 0.9))
+    ctx.strokePath()
+    ctx.restoreGState()
+
+    // 5.3 機身頂部微型通氣感應孔 (LYWSD03MMC 特色傳感器開孔)
+    let slotW = devSize * 0.18
+    let slotH = devSize * 0.022
+    let slotRect = CGRect(x: devRect.midX - slotW * 0.5, y: devRect.maxY - devSize * 0.055, width: slotW, height: slotH)
+    let slotPath = CGPath(roundedRect: slotRect, cornerWidth: slotH * 0.5, cornerHeight: slotH * 0.5, transform: nil)
+    ctx.saveGState()
+    ctx.addPath(slotPath)
+    ctx.setFillColor(CGColor(red: 0.82, green: 0.85, blue: 0.88, alpha: 0.9))
+    ctx.fillPath()
+    ctx.restoreGState()
+
+    // 6. 正中央高擬真液晶顯示螢幕 (E-Ink / Segment LCD Display)
+    let screenW = devSize * 0.76
+    let screenH = devSize * 0.70
+    let screenRect = CGRect(
+        x: devRect.midX - screenW * 0.5,
+        y: devRect.midY - screenH * 0.5 - devSize * 0.015,
+        width: screenW,
+        height: screenH
+    )
+    let screenRadius = devSize * 0.08
+    let screenPath = CGPath(roundedRect: screenRect, cornerWidth: screenRadius, cornerHeight: screenRadius, transform: nil)
+
+    // 螢幕微凹槽內陰影與背景
+    ctx.saveGState()
+    ctx.addPath(screenPath)
+    // 液晶螢幕特有的清透淡灰綠色調 (#ECF1EC -> #E2E8E2)
+    let lcdColors = [
+        CGColor(red: 0.93, green: 0.95, blue: 0.93, alpha: 1.0),
+        CGColor(red: 0.88, green: 0.91, blue: 0.88, alpha: 1.0)
+    ] as CFArray
+    let lcdGrad = CGGradient(colorsSpace: space, colors: lcdColors, locations: [0.0, 1.0])!
+    ctx.drawLinearGradient(lcdGrad, start: CGPoint(x: screenRect.midX, y: screenRect.maxY), end: CGPoint(x: screenRect.midX, y: screenRect.minY), options: [])
+
+    // 螢幕精緻內邊框
+    ctx.addPath(screenPath)
+    ctx.setLineWidth(s * 0.007)
+    ctx.setStrokeColor(CGColor(red: 0.78, green: 0.82, blue: 0.80, alpha: 0.8))
+    ctx.strokePath()
+    ctx.restoreGState()
+
+    // 7. 螢幕內部數據與圖示繪製 (LCD Digits & Icons)
+    let textColor = NSColor(red: 0.12, green: 0.16, blue: 0.14, alpha: 0.92)
+
+    // 7.1 上排溫度大字 (例如: 26.8°C)
+    let tempStr = "26.8"
+    let tempFontSize = screenH * 0.36
+    let tempFont = NSFont.monospacedDigitSystemFont(ofSize: tempFontSize, weight: .bold)
+    let tempAttrs: [NSAttributedString.Key: Any] = [
+        .font: tempFont,
+        .foregroundColor: textColor
+    ]
+    let tempSize = (tempStr as NSString).size(withAttributes: tempAttrs)
+    let tempPoint = NSPoint(x: screenRect.minX + screenW * 0.12, y: screenRect.midY + screenH * 0.04)
+    (tempStr as NSString).draw(at: tempPoint, withAttributes: tempAttrs)
+
+    // 上排 °C 符號
+    let unitStr = "°C"
+    let unitFontSize = screenH * 0.18
+    let unitFont = NSFont.systemFont(ofSize: unitFontSize, weight: .semibold)
+    let unitAttrs: [NSAttributedString.Key: Any] = [
+        .font: unitFont,
+        .foregroundColor: textColor.withAlphaComponent(0.85)
+    ]
+    let unitPoint = NSPoint(x: tempPoint.x + tempSize.width + s * 0.006, y: tempPoint.y + tempFontSize * 0.35)
+    (unitStr as NSString).draw(at: unitPoint, withAttributes: unitAttrs)
+
+    // 7.2 下排濕度數值 (例如: 58%)
+    let humStr = "58%"
+    let humFontSize = screenH * 0.28
+    let humFont = NSFont.monospacedDigitSystemFont(ofSize: humFontSize, weight: .semibold)
+    let humAttrs: [NSAttributedString.Key: Any] = [
+        .font: humFont,
+        .foregroundColor: textColor
+    ]
+    let humSize = (humStr as NSString).size(withAttributes: humAttrs)
+    let humPoint = NSPoint(x: screenRect.minX + screenW * 0.13, y: screenRect.minY + screenH * 0.10)
+    (humStr as NSString).draw(at: humPoint, withAttributes: humAttrs)
+
+    // 7.3 下排小米標誌性「舒適笑臉」圖示 😊 (Comfort Smile)
+    let smileCenterX = humPoint.x + humSize.width + screenW * 0.16
+    let smileCenterY = humPoint.y + humFontSize * 0.45
+    let smileRadius = screenH * 0.11
+
+    ctx.saveGState()
+    ctx.setLineWidth(s * 0.010)
+    ctx.setLineCap(.round)
+    ctx.setStrokeColor(textColor.cgColor)
+
+    // 眼睛兩點
+    let eyeOffset = smileRadius * 0.45
+    ctx.setFillColor(textColor.cgColor)
+    ctx.fillEllipse(in: CGRect(x: smileCenterX - eyeOffset - s * 0.007, y: smileCenterY + smileRadius * 0.2, width: s * 0.014, height: s * 0.014))
+    ctx.fillEllipse(in: CGRect(x: smileCenterX + eyeOffset - s * 0.007, y: smileCenterY + smileRadius * 0.2, width: s * 0.014, height: s * 0.014))
+
+    // 弧形笑臉嘴巴
+    ctx.addArc(center: CGPoint(x: smileCenterX, y: smileCenterY + smileRadius * 0.1), radius: smileRadius * 0.65, startAngle: .pi * 1.15, endAngle: .pi * 1.85, clockwise: false)
+    ctx.strokePath()
+    ctx.restoreGState()
+
+    // 7.4 右上角精緻藍牙連線微標 (Bluetooth Symbol)
+    let btCenter = CGPoint(x: screenRect.maxX - screenW * 0.14, y: screenRect.maxY - screenH * 0.18)
+    ctx.saveGState()
+    ctx.setLineWidth(s * 0.008)
+    ctx.setLineCap(.round)
+    ctx.setLineJoin(.round)
+    ctx.setStrokeColor(CGColor(red: 0.10, green: 0.55, blue: 0.95, alpha: 0.85))
+
+    let bH = screenH * 0.14
+    let bW = bH * 0.55
+    ctx.move(to: CGPoint(x: btCenter.x, y: btCenter.y - bH * 0.5))
+    ctx.addLine(to: CGPoint(x: btCenter.x, y: btCenter.y + bH * 0.5))
+    ctx.addLine(to: CGPoint(x: btCenter.x + bW, y: btCenter.y + bH * 0.25))
+    ctx.addLine(to: CGPoint(x: btCenter.x - bW * 0.7, y: btCenter.y - bH * 0.2))
+    ctx.move(to: CGPoint(x: btCenter.x - bW * 0.7, y: btCenter.y + bH * 0.2))
+    ctx.addLine(to: CGPoint(x: btCenter.x + bW, y: btCenter.y - bH * 0.25))
+    ctx.addLine(to: CGPoint(x: btCenter.x, y: btCenter.y - bH * 0.5))
     ctx.strokePath()
     ctx.restoreGState()
 
@@ -221,4 +256,12 @@ for (name, px) in sizes {
         try? data.write(to: URL(fileURLWithPath: dest))
     }
 }
-print("Generated Google Stitch Vibe Design icons in \(iconsetPath)")
+
+// 另外匯出一份 64x64 的高清硬體圖示到 Resources/device.png 供視窗標頭使用
+let resDir = "Resources"
+try? fm.createDirectory(atPath: resDir, withIntermediateDirectories: true)
+if let devData = renderIcon(pixelSize: 128) {
+    try? devData.write(to: URL(fileURLWithPath: "\(resDir)/device.png"))
+}
+
+print("Generated Apple-Minimalist Xiaomi LYWSD03MMC hardware icons in \(iconsetPath)")
