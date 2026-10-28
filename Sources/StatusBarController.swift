@@ -32,6 +32,12 @@ final class StatusBarController: NSObject {
     private var dashboardController: DashboardWindowController?
     private var latestReading: SensorReading?
 
+    // 居家大範圍地理圍欄選單項目
+    private var geofenceSubMenu: NSMenu!
+    private var geofenceToggleMenuItem: NSMenuItem!
+    private var geofenceStatusMenuItem: NSMenuItem!
+    private var geofenceRadiusMenuItems: [NSMenuItem] = []
+
     override init() {
         super.init()
 
@@ -56,6 +62,9 @@ final class StatusBarController: NSObject {
 
         bluetoothManager = BluetoothManager()
         bluetoothManager.delegate = self
+
+        LocationGatekeeper.shared.bluetoothManager = bluetoothManager
+        LocationGatekeeper.shared.delegate = self
 
         // 啟動時立刻恢復最近一次讀取的數據 (避免圖示閃爍或意外消失)
         if let last = HistoryManager.shared.points.last {
@@ -225,6 +234,9 @@ final class StatusBarController: NSObject {
         let styleParentItem = NSMenuItem(title: "狀態列樣式", action: nil, keyEquivalent: "")
         styleParentItem.submenu = styleSubMenu
         menu.addItem(styleParentItem)
+
+        // 居家大範圍感應子選單 (離家徹底關閉藍牙)
+        setupGeofenceMenu(parentMenu: menu)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -560,6 +572,130 @@ final class StatusBarController: NSObject {
         mijiaLog("低電量通知設定變更: \(NotificationManager.shared.isEnabled ? "開啟" : "關閉")")
     }
 
+    // MARK: - 居家大範圍地理圍欄選單與互動
+    private func setupGeofenceMenu(parentMenu: NSMenu) {
+        geofenceSubMenu = NSMenu()
+
+        geofenceToggleMenuItem = NSMenuItem(
+            title: "啟用大範圍感應 (離家徹底停機)",
+            action: #selector(handleToggleGeofence),
+            keyEquivalent: ""
+        )
+        geofenceToggleMenuItem.target = self
+        geofenceToggleMenuItem.state = LocationGatekeeper.shared.isEnabled ? .on : .off
+        geofenceSubMenu.addItem(geofenceToggleMenuItem)
+
+        geofenceSubMenu.addItem(NSMenuItem.separator())
+
+        let recordItem = NSMenuItem(
+            title: "📌 記錄目前位置為居家中心",
+            action: #selector(handleRecordHomeLocation),
+            keyEquivalent: ""
+        )
+        recordItem.target = self
+        geofenceSubMenu.addItem(recordItem)
+
+        // 半徑設定 (100m, 200m, 500m, 1000m)
+        let radiusSubMenu = NSMenu()
+        let radii: [Double] = [100.0, 200.0, 500.0, 1000.0]
+        geofenceRadiusMenuItems.removeAll()
+        for r in radii {
+            let item = NSMenuItem(title: "\(Int(r)) 公尺", action: #selector(handleSelectRadius(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = r
+            item.state = (abs(LocationGatekeeper.shared.geofenceRadius - r) < 1.0) ? .on : .off
+            geofenceRadiusMenuItems.append(item)
+            radiusSubMenu.addItem(item)
+        }
+        let radiusParent = NSMenuItem(title: "圍欄感應半徑", action: nil, keyEquivalent: "")
+        radiusParent.submenu = radiusSubMenu
+        geofenceSubMenu.addItem(radiusParent)
+
+        geofenceSubMenu.addItem(NSMenuItem.separator())
+
+        geofenceStatusMenuItem = NSMenuItem(title: "狀態: 尚未設定居家位置", action: nil, keyEquivalent: "")
+        geofenceStatusMenuItem.isEnabled = false
+        geofenceSubMenu.addItem(geofenceStatusMenuItem)
+
+        let clearItem = NSMenuItem(
+            title: "❌ 清除居家位置設定",
+            action: #selector(handleClearHomeLocation),
+            keyEquivalent: ""
+        )
+        clearItem.target = self
+        geofenceSubMenu.addItem(clearItem)
+
+        let geofenceParent = NSMenuItem(title: "📍 居家大範圍感應 (離家自動關閉)", action: nil, keyEquivalent: "")
+        geofenceParent.submenu = geofenceSubMenu
+        parentMenu.addItem(geofenceParent)
+
+        updateGeofenceMenuState()
+    }
+
+    @objc private func handleToggleGeofence() {
+        if !LocationGatekeeper.shared.hasHomeLocation {
+            handleRecordHomeLocation()
+            return
+        }
+        LocationGatekeeper.shared.isEnabled.toggle()
+        updateGeofenceMenuState()
+    }
+
+    @objc private func handleRecordHomeLocation() {
+        let alert = NSAlert()
+        alert.messageText = "設定居家中心位置"
+        alert.informativeText = "即將使用您目前的定位座標與連線網路作為「家」的大範圍參考中心。確定要將目前位置設為居家中心嗎？"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "確定設定")
+        alert.addButton(withTitle: "取消")
+        if alert.runModal() == .alertFirstButtonReturn {
+            LocationGatekeeper.shared.recordCurrentAsHome { [weak self] success, msg in
+                DispatchQueue.main.async {
+                    self?.updateGeofenceMenuState()
+                    let resultAlert = NSAlert()
+                    resultAlert.messageText = success ? "居家位置設定成功" : "設定提示"
+                    resultAlert.informativeText = msg
+                    resultAlert.runModal()
+                }
+            }
+        }
+    }
+
+    @objc private func handleSelectRadius(_ sender: NSMenuItem) {
+        guard let r = sender.representedObject as? Double else { return }
+        LocationGatekeeper.shared.geofenceRadius = r
+        for item in geofenceRadiusMenuItems {
+            if let ir = item.representedObject as? Double {
+                item.state = (abs(ir - r) < 1.0) ? .on : .off
+            }
+        }
+        updateGeofenceMenuState()
+    }
+
+    @objc private func handleClearHomeLocation() {
+        LocationGatekeeper.shared.clearHomeLocation()
+        updateGeofenceMenuState()
+    }
+
+    func updateGeofenceMenuState() {
+        geofenceToggleMenuItem?.state = LocationGatekeeper.shared.isEnabled ? .on : .off
+
+        if !LocationGatekeeper.shared.hasHomeLocation {
+            geofenceStatusMenuItem?.title = "狀態: 尚未設定居家位置"
+        } else if !LocationGatekeeper.shared.isEnabled {
+            geofenceStatusMenuItem?.title = "狀態: 大範圍感應已暫停"
+        } else {
+            let isHome = LocationGatekeeper.shared.isInHomeArea
+            if let dist = LocationGatekeeper.shared.lastKnownDistance {
+                geofenceStatusMenuItem?.title = isHome ?
+                    String(format: "狀態: 🏠 範圍內 (距家 %.0fm)", dist) :
+                    String(format: "狀態: 🚗 範圍外 (距家 %.0fm · 停機)", dist)
+            } else {
+                geofenceStatusMenuItem?.title = isHome ? "狀態: 🏠 在家範圍內 (運行中)" : "狀態: 🚗 範圍外 (藍牙停機中)"
+            }
+        }
+    }
+
     @objc private func handleQuit() {
         NSApplication.shared.terminate(nil)
     }
@@ -621,5 +757,12 @@ extension StatusBarController: BluetoothManagerDelegate {
 
     func didFailWithError(_ error: String) {
         statusMenuItem.title = "提示: \(error)"
+    }
+}
+
+// MARK: - LocationGatekeeperDelegate
+extension StatusBarController: LocationGatekeeperDelegate {
+    func locationGatekeeperDidChangeState(isHome: Bool, reason: String) {
+        updateGeofenceMenuState()
     }
 }

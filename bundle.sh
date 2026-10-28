@@ -13,6 +13,8 @@ swiftc -O -module-cache-path /tmp/clang_cache \
     -framework AppKit \
     -framework CoreBluetooth \
     -framework UserNotifications \
+    -framework CoreLocation \
+    -framework Network \
     Sources/*.swift \
     -o MijiaTempBar
 
@@ -46,7 +48,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.1.0</string>
+    <string>1.5.0</string>
     <key>LSMinimumSystemVersion</key>
     <string>12.0</string>
     <key>LSUIElement</key>
@@ -55,6 +57,10 @@ cat > "$APP/Contents/Info.plist" <<EOF
     <string>需要使用藍牙連線並讀取米家溫濕度計 2 的即時溫濕度與電量數據。</string>
     <key>NSBluetoothPeripheralUsageDescription</key>
     <string>需要使用藍牙連線並讀取米家溫濕度計 2 的即時溫濕度與電量數據。</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>用於建立居家大範圍地理圍欄，在您離開家時徹底關閉藍牙輪詢以節省筆電電力，回到家時自動喚醒連線。</string>
+    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+    <string>用於建立居家大範圍地理圍欄，在您離開家時徹底關閉藍牙輪詢以節省筆電電力，回到家時自動喚醒連線。</string>
 </dict>
 </plist>
 EOF

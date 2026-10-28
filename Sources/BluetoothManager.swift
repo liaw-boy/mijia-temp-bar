@@ -43,6 +43,7 @@ final class BluetoothManager: NSObject {
 
     private(set) var currentReading: SensorReading?
     private(set) var isScanning: Bool = false
+    private(set) var isSuspended: Bool = false
 
     override init() {
         super.init()
@@ -101,6 +102,10 @@ final class BluetoothManager: NSObject {
 
     func connectAndFetch() {
         guard centralManager.state == .poweredOn else { return }
+        guard !isSuspended else {
+            mijiaLog("目前處於大範圍地理圍欄停機休眠狀態，略過藍牙輪詢。")
+            return
+        }
 
         // 若已有目標周邊參照，直接發起連線（最省電、最快速）
         if let p = targetPeripheral {
@@ -172,8 +177,35 @@ final class BluetoothManager: NSObject {
     }
 
     func manualRefresh() {
-        mijiaLog("手動要求立即重新整理 (重置離線退避計數器)...")
+        mijiaLog("手動要求立即重新整理 (重置離線退避與停機狀態)...")
+        isSuspended = false
         consecutiveFailures = 0
+        connectAndFetch()
+    }
+
+    /// 離開居家大範圍時全面停止輪詢（0 耗電）
+    func suspend(reason: String = "已離開居家大範圍") {
+        guard !isSuspended else { return }
+        isSuspended = true
+        refreshTimer?.invalidate()
+        refreshTimer = nil
+        connectTimeoutTimer?.invalidate()
+        connectTimeoutTimer = nil
+        if let p = targetPeripheral {
+            centralManager.cancelPeripheralConnection(p)
+        }
+        stopScan()
+        mijiaLog("【大範圍地理圍欄】\(reason)，全面暫停藍牙輪詢 (0 耗電)")
+        delegate?.didUpdateStatus("\(reason) · 休眠停機")
+    }
+
+    /// 回到居家大範圍內，自動喚醒恢復輪詢
+    func resume() {
+        guard isSuspended else { return }
+        isSuspended = false
+        consecutiveFailures = 0
+        mijiaLog("【大範圍地理圍欄】已回到居家範圍，自動喚醒並發起連線...")
+        delegate?.didUpdateStatus("已進入居家範圍，連線中...")
         connectAndFetch()
     }
 
