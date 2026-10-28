@@ -118,7 +118,7 @@ final class StatusBarController: NSObject {
         let menu = NSMenu()
         menu.autoenablesItems = false
 
-        headerMenuItem = NSMenuItem(title: "米家藍牙溫濕度計 2", action: #selector(showDashboard), keyEquivalent: "")
+        headerMenuItem = NSMenuItem(title: "米家藍牙溫濕度計 2", action: #selector(showDashboardAction), keyEquivalent: "")
         headerMenuItem.target = self
         headerMenuItem.isEnabled = true
         headerMenuItem.attributedTitle = NSAttributedString(
@@ -127,9 +127,13 @@ final class StatusBarController: NSObject {
         )
         menu.addItem(headerMenuItem)
 
-        let openDashboardItem = NSMenuItem(title: "📊 開啟即時儀表板與歷史圖表 (⌘D)...", action: #selector(showDashboard), keyEquivalent: "d")
+        let openDashboardItem = NSMenuItem(title: "📊 開啟即時儀表板與歷史圖表 (⌘D)...", action: #selector(showDashboardAction), keyEquivalent: "d")
         openDashboardItem.target = self
         menu.addItem(openDashboardItem)
+
+        let openSettingsItem = NSMenuItem(title: "⚙️ 偏好與進階設定 (⌘,)...", action: #selector(showSettingsAction), keyEquivalent: ",")
+        openSettingsItem.target = self
+        menu.addItem(openSettingsItem)
 
         statusMenuItem = NSMenuItem(title: "狀態: 正在搜尋藍牙設備...", action: nil, keyEquivalent: "")
         statusMenuItem.isEnabled = false
@@ -505,11 +509,45 @@ final class StatusBarController: NSObject {
         }
     }
 
-    @objc private func showDashboard() {
+    @objc private func showDashboardAction() {
+        showWindow(tab: .dashboard)
+    }
+
+    @objc private func showSettingsAction() {
+        showWindow(tab: .settings)
+    }
+
+    private func showWindow(tab: DashboardWindowController.WindowTab) {
         if dashboardController == nil {
             dashboardController = DashboardWindowController.shared
             dashboardController?.onRefreshRequested = { [weak self] in
                 self?.bluetoothManager.manualRefresh()
+            }
+            dashboardController?.onIntervalChanged = { [weak self] sec in
+                self?.bluetoothManager.setRefreshInterval(sec)
+                self?.refreshIntervalMenuChecks()
+            }
+            dashboardController?.onStyleChanged = { [weak self] style in
+                self?.displayStyle = style
+                UserDefaults.standard.set(style.rawValue, forKey: "DisplayStyle")
+                self?.updateTitle()
+                self?.refreshStyleMenuChecks()
+            }
+            dashboardController?.onHideWhenDisconnectedChanged = { [weak self] hide in
+                self?.hideWhenDisconnected = hide
+                UserDefaults.standard.set(hide, forKey: "HideWhenDisconnected")
+                self?.hideWhenDisconnectedMenuItem.state = hide ? .on : .off
+                if hide && !(self?.isConnected ?? false) {
+                    self?.statusItem.isVisible = false
+                } else {
+                    self?.statusItem.isVisible = true
+                }
+            }
+            dashboardController?.onSettingsChanged = { [weak self] in
+                self?.updateGeofenceMenuState()
+                self?.refreshIntervalMenuChecks()
+                self?.refreshStyleMenuChecks()
+                self?.updateTitle()
             }
         }
         if let r = bluetoothManager.currentReading {
@@ -517,9 +555,9 @@ final class StatusBarController: NSObject {
         } else {
             dashboardController?.reloadData()
         }
+        dashboardController?.updatePresenceStatus()
         NSApp.activate(ignoringOtherApps: true)
-        dashboardController?.showWindow(nil)
-        dashboardController?.window?.makeKeyAndOrderFront(nil)
+        dashboardController?.show(tab: tab)
     }
 
     @objc private func handleRefresh() {
@@ -813,6 +851,7 @@ final class StatusBarController: NSObject {
 extension StatusBarController: BluetoothManagerDelegate {
     func didUpdateStatus(_ status: String) {
         statusMenuItem.title = "狀態: \(status)"
+        dashboardController?.updateStatusText(status)
 
         if status.contains("連線中斷") || status.contains("失敗") || status.contains("關閉") || status.contains("範圍") {
             isConnected = false
@@ -872,5 +911,6 @@ extension StatusBarController: BluetoothManagerDelegate {
 extension StatusBarController: LocationGatekeeperDelegate {
     func locationGatekeeperDidChangeState(isHome: Bool, reason: String) {
         updateGeofenceMenuState()
+        dashboardController?.updatePresenceStatus()
     }
 }
