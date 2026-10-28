@@ -19,28 +19,10 @@ final class StatusBarController: NSObject {
     private var isConnected: Bool = false
     private var tempShowTimer: Timer?
 
-    // 選單項目參照
-    private var headerMenuItem: NSMenuItem!
-    private var tempMenuItem: NSMenuItem!
-    private var humMenuItem: NSMenuItem!
-    private var batMenuItem: NSMenuItem!
-    private var statusMenuItem: NSMenuItem!
-    private var timeMenuItem: NSMenuItem!
-    private var modeMenuItem: NSMenuItem!
-    private var hideWhenDisconnectedMenuItem: NSMenuItem!
-    private var intervalSubMenu: NSMenu!
-    private var customIntervalMenuItem: NSMenuItem!
+    private let popover = NSPopover()
+    private var outsideClickMonitor: Any?
     private var dashboardController: DashboardWindowController?
     private var latestReading: SensorReading?
-
-    // 居家大範圍地理圍欄與 Wi-Fi 連線選單項目
-    private var geofenceSubMenu: NSMenu!
-    private var wifiToggleMenuItem: NSMenuItem!
-    private var wifiSetSSIDMenuItem: NSMenuItem!
-    private var wifiClearMenuItem: NSMenuItem!
-    private var geofenceToggleMenuItem: NSMenuItem!
-    private var geofenceStatusMenuItem: NSMenuItem!
-    private var geofenceRadiusMenuItems: [NSMenuItem] = []
 
     override init() {
         super.init()
@@ -62,7 +44,7 @@ final class StatusBarController: NSObject {
         }
 
         setupStatusItem()
-        setupMenu()
+        setupPopover()
 
         bluetoothManager = BluetoothManager()
         bluetoothManager.delegate = self
@@ -87,7 +69,7 @@ final class StatusBarController: NSObject {
             )
             latestReading = cachedReading
             updateTitle()
-            applyReadingToMenu(cachedReading)
+            dashboardController?.updateReading(cachedReading)
         } else if hideWhenDisconnected {
             // 首次全新安裝無快取數據時，若超過 45 秒未連線才依設定隱藏
             tempShowTimer = Timer.scheduledTimer(withTimeInterval: 45.0, repeats: false) { [weak self] _ in
@@ -102,7 +84,13 @@ final class StatusBarController: NSObject {
         if LocationGatekeeper.shared.isInHomeArea {
             bluetoothManager.startScan()
         }
-        refreshIntervalMenuChecks()
+
+        // 啟動後稍等再檢查新版本，避免與藍牙初始化搶資源
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            UpdateChecker.shared.checkIfDue { status in
+                self?.dashboardController?.showUpdateStatus(status)
+            }
+        }
     }
 
     private func setupStatusItem() {
@@ -111,151 +99,100 @@ final class StatusBarController: NSObject {
         if let button = statusItem.button {
             button.title = "🌡️ 搜尋中..."
             button.toolTip = "米家藍牙溫濕度計 2"
+            button.target = self
+            button.action = #selector(handleStatusButtonClick)
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
     }
 
-    private func setupMenu() {
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-
-        headerMenuItem = NSMenuItem(title: "米家藍牙溫濕度計 2", action: #selector(showDashboardAction), keyEquivalent: "")
-        headerMenuItem.target = self
-        headerMenuItem.isEnabled = true
-        headerMenuItem.attributedTitle = NSAttributedString(
-            string: "米家藍牙溫濕度計 2",
-            attributes: [.font: NSFont.boldSystemFont(ofSize: 13)]
-        )
-        menu.addItem(headerMenuItem)
-
-        let openDashboardItem = NSMenuItem(title: "📊 開啟即時儀表板與歷史圖表 (⌘D)...", action: #selector(showDashboardAction), keyEquivalent: "d")
-        openDashboardItem.target = self
-        menu.addItem(openDashboardItem)
-
-        let openSettingsItem = NSMenuItem(title: "⚙️ 偏好與進階設定 (⌘,)...", action: #selector(showSettingsAction), keyEquivalent: ",")
-        openSettingsItem.target = self
-        menu.addItem(openSettingsItem)
-
-        statusMenuItem = NSMenuItem(title: "狀態: 正在搜尋藍牙設備...", action: nil, keyEquivalent: "")
-        statusMenuItem.isEnabled = false
-        menu.addItem(statusMenuItem)
-
-        menu.addItem(NSMenuItem.separator())
-
-        tempMenuItem = NSMenuItem(title: "溫度: -- °C", action: nil, keyEquivalent: "")
-        tempMenuItem.isEnabled = false
-        menu.addItem(tempMenuItem)
-
-        humMenuItem = NSMenuItem(title: "濕度: -- %", action: nil, keyEquivalent: "")
-        humMenuItem.isEnabled = false
-        menu.addItem(humMenuItem)
-
-        batMenuItem = NSMenuItem(title: "電量: -- %", action: nil, keyEquivalent: "")
-        batMenuItem.isEnabled = false
-        menu.addItem(batMenuItem)
-
-        modeMenuItem = NSMenuItem(title: "模式: --", action: nil, keyEquivalent: "")
-        modeMenuItem.isEnabled = false
-        menu.addItem(modeMenuItem)
-
-        timeMenuItem = NSMenuItem(title: "最後更新: --", action: nil, keyEquivalent: "")
-        timeMenuItem.isEnabled = false
-        menu.addItem(timeMenuItem)
-
-        menu.addItem(NSMenuItem.separator())
-
-        let refreshItem = NSMenuItem(title: "重新整理 / 重新搜尋", action: #selector(handleRefresh), keyEquivalent: "r")
-        refreshItem.target = self
-        menu.addItem(refreshItem)
-
-        // 連線間隔 / 更新頻率子選單
-        intervalSubMenu = NSMenu()
-        let intervals: [(String, Double)] = [
-            ("30 秒 (即時模式 - 較耗電)", 30.0),
-            ("1 分鐘", 60.0),
-            ("3 分鐘", 180.0),
-            ("5 分鐘 (推薦平衡)", 300.0),
-            ("10 分鐘", 600.0),
-            ("15 分鐘", 900.0),
-            ("30 分鐘 (極致省電)", 1800.0),
-            ("1 小時 (超省電休眠，續航 1 年+)", 3600.0),
-            ("2 小時", 7200.0)
-        ]
-        for (title, sec) in intervals {
-            let item = NSMenuItem(title: title, action: #selector(handleSelectInterval(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = sec
-            intervalSubMenu.addItem(item)
+    private func setupPopover() {
+        let dashboard = DashboardWindowController.shared
+        dashboardController = dashboard
+        dashboard.onRefreshRequested = { [weak self] in
+            self?.handleRefresh()
         }
-        intervalSubMenu.addItem(NSMenuItem.separator())
-        customIntervalMenuItem = NSMenuItem(title: "自訂時間 (分鐘)...", action: #selector(handleCustomInterval), keyEquivalent: "")
-        customIntervalMenuItem.target = self
-        intervalSubMenu.addItem(customIntervalMenuItem)
+        dashboard.onIntervalChanged = { [weak self] sec in
+            self?.bluetoothManager.setRefreshInterval(sec)
+        }
+        dashboard.onStyleChanged = { [weak self] style in
+            self?.displayStyle = style
+            UserDefaults.standard.set(style.rawValue, forKey: "DisplayStyle")
+            self?.updateTitle()
+        }
+        dashboard.onHideWhenDisconnectedChanged = { [weak self] hide in
+            guard let self = self else { return }
+            self.hideWhenDisconnected = hide
+            UserDefaults.standard.set(hide, forKey: "HideWhenDisconnected")
+            self.statusItem.isVisible = !(hide && !self.isConnected)
+        }
+        dashboard.onSettingsChanged = { [weak self] in
+            self?.updateTitle()
+        }
 
-        let intervalParentItem = NSMenuItem(title: "連線間隔時間 (更新頻率)", action: nil, keyEquivalent: "")
-        intervalParentItem.submenu = intervalSubMenu
-        menu.addItem(intervalParentItem)
+        if let content = dashboard.detachContentView() {
+            popover.contentViewController = DashboardPanelViewController(content: content)
+        }
+        popover.contentSize = DashboardPanelViewController.panelSize
+        popover.behavior = .transient
+        popover.delegate = self
+        // 切換到其他 App (App 失去焦點) 時一併收起
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.popover.performClose(nil)
+        }
+        popover.animates = true
+        popover.appearance = NSAppearance(named: .darkAqua)
+    }
 
-        // 僅連線時顯示開關
-        hideWhenDisconnectedMenuItem = NSMenuItem(
-            title: "僅連線時顯示 (斷線時自動隱藏圖示)",
-            action: #selector(toggleHideWhenDisconnected),
-            keyEquivalent: ""
-        )
-        hideWhenDisconnectedMenuItem.target = self
-        hideWhenDisconnectedMenuItem.state = hideWhenDisconnected ? .on : .off
-        menu.addItem(hideWhenDisconnectedMenuItem)
+    // MARK: - 狀態列點擊
 
-        // 低電量警示通知開關
-        let lowBatteryMenuItem = NSMenuItem(
-            title: "🔔 低電量警示通知 (電量 ≤ 15%)",
-            action: #selector(toggleLowBatteryNotification),
-            keyEquivalent: ""
-        )
-        lowBatteryMenuItem.target = self
-        lowBatteryMenuItem.state = NotificationManager.shared.isEnabled ? .on : .off
-        menu.addItem(lowBatteryMenuItem)
+    @objc private func handleStatusButtonClick(_ sender: NSStatusBarButton) {
+        if NSApp.currentEvent?.type == .rightMouseUp {
+            popover.performClose(nil)
+            showContextMenu()
+        } else {
+            togglePopover()
+        }
+    }
 
-        // 樣式切換子選單
-        let styleSubMenu = NSMenu()
-        let styleItemStats = NSMenuItem(title: "雙行微型膠囊樣式 ([TMP] / [HUM])", action: #selector(setDisplayStatsBadge), keyEquivalent: "")
-        styleItemStats.target = self
-        styleItemStats.state = (displayStyle == .statsBadge) ? .on : .off
-        styleSubMenu.addItem(styleItemStats)
+    private func togglePopover(tab: DashboardWindowController.WindowTab = .dashboard) {
+        if popover.isShown {
+            popover.performClose(nil)
+            return
+        }
+        guard let button = statusItem.button else { return }
+        if let r = bluetoothManager.currentReading {
+            dashboardController?.updateReading(r)
+        } else {
+            dashboardController?.reloadData()
+        }
+        dashboardController?.updatePresenceStatus()
+        dashboardController?.switchTab(tab)
+        NSApp.activate(ignoringOtherApps: true)
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        popover.contentViewController?.view.window?.makeKey()
 
-        let styleItemStacked = NSMenuItem(title: "純數字雙行堆疊 (26.1° / 63%)", action: #selector(setDisplayStacked), keyEquivalent: "")
-        styleItemStacked.target = self
-        styleItemStacked.state = (displayStyle == .stacked) ? .on : .off
-        styleSubMenu.addItem(styleItemStacked)
+        // 常駐型 (accessory) App 的 transient 面板不會因點擊其他 App 而收起，自行監聽外部點擊
+        outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
+            self?.popover.performClose(nil)
+        }
+    }
 
-        let styleItemHorizontal = NSMenuItem(title: "橫向完整 (🌡️ 26°C  💧 65%)", action: #selector(setDisplayHorizontal), keyEquivalent: "")
-        styleItemHorizontal.target = self
-        styleItemHorizontal.state = (displayStyle == .horizontal) ? .on : .off
-        styleSubMenu.addItem(styleItemHorizontal)
-
-        let styleItemTemp = NSMenuItem(title: "僅溫度 (🌡️ 26°C)", action: #selector(setDisplayTempOnly), keyEquivalent: "")
-        styleItemTemp.target = self
-        styleItemTemp.state = (displayStyle == .tempOnly) ? .on : .off
-        styleSubMenu.addItem(styleItemTemp)
-
-        let styleItemCompact = NSMenuItem(title: "緊湊單行 (26.1° 65%)", action: #selector(setDisplayCompact), keyEquivalent: "")
-        styleItemCompact.target = self
-        styleItemCompact.state = (displayStyle == .compact) ? .on : .off
-        styleSubMenu.addItem(styleItemCompact)
-
-        let styleParentItem = NSMenuItem(title: "狀態列樣式", action: nil, keyEquivalent: "")
-        styleParentItem.submenu = styleSubMenu
-        menu.addItem(styleParentItem)
-
-        // 居家大範圍感應子選單 (離家徹底關閉藍牙)
-        setupGeofenceMenu(parentMenu: menu)
-
+    /// 右鍵只保留最精簡的選單
+    private func showContextMenu() {
+        let menu = NSMenu()
+        let settings = NSMenuItem(title: "設定…", action: #selector(showSettingsAction), keyEquivalent: ",")
+        settings.target = self
+        menu.addItem(settings)
         menu.addItem(NSMenuItem.separator())
-
-        let quitItem = NSMenuItem(title: "結束 MijiaTempBar", action: #selector(handleQuit), keyEquivalent: "q")
-        quitItem.target = self
-        menu.addItem(quitItem)
+        let quit = NSMenuItem(title: "結束 MijiaTempBar", action: #selector(handleQuit), keyEquivalent: "q")
+        quit.target = self
+        menu.addItem(quit)
 
         statusItem.menu = menu
+        statusItem.button?.performClick(nil)
+        statusItem.menu = nil
     }
 
     private func updateTitle() {
@@ -424,6 +361,7 @@ final class StatusBarController: NSObject {
         return image
     }
 
+
     func temporarilyShowStatusItem() {
         tempShowTimer?.invalidate()
         statusItem.isVisible = true
@@ -437,409 +375,20 @@ final class StatusBarController: NSObject {
         }
     }
 
+
     // MARK: - Actions
-    @objc private func handleSelectInterval(_ sender: NSMenuItem) {
-        guard let sec = sender.representedObject as? Double else { return }
-        bluetoothManager.setRefreshInterval(sec)
-        refreshIntervalMenuChecks()
-    }
-
-    @objc private func handleCustomInterval() {
-        let alert = NSAlert()
-        alert.messageText = "自訂更新間隔時間"
-        alert.informativeText = "請輸入更新輪詢間隔（以分鐘為單位）：\n例如輸入 60 代表 1 小時，輸入 120 代表 2 小時。"
-        alert.addButton(withTitle: "確定")
-        alert.addButton(withTitle: "取消")
-
-        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
-        let currentMinutes = Int(bluetoothManager.refreshInterval / 60.0)
-        input.stringValue = "\(max(1, currentMinutes))"
-        alert.accessoryView = input
-
-        NSApp.activate(ignoringOtherApps: true)
-        let response = alert.runModal()
-        if response == .alertFirstButtonReturn {
-            let text = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let mins = Double(text), mins >= 0.5 {
-                let seconds = mins * 60.0
-                bluetoothManager.setRefreshInterval(seconds)
-                refreshIntervalMenuChecks()
-            }
-        }
-    }
-
-    private func refreshIntervalMenuChecks() {
-        guard let sub = intervalSubMenu else { return }
-        let currentSec = bluetoothManager.refreshInterval
-        var matchedPreset = false
-        for item in sub.items {
-            if let sec = item.representedObject as? Double {
-                let isMatch = abs(sec - currentSec) < 0.1
-                item.state = isMatch ? .on : .off
-                if isMatch { matchedPreset = true }
-            }
-        }
-
-        if let customItem = customIntervalMenuItem {
-            customItem.state = matchedPreset ? .off : .on
-            if !matchedPreset {
-                if currentSec >= 3600.0 {
-                    let hrs = currentSec / 3600.0
-                    let formatted = (hrs.truncatingRemainder(dividingBy: 1.0) == 0) ? String(format: "%.0f", hrs) : String(format: "%.1f", hrs)
-                    customItem.title = "自訂時間... (目前: \(formatted) 小時)"
-                } else {
-                    let mins = Int(round(currentSec / 60.0))
-                    customItem.title = "自訂時間... (目前: \(mins) 分鐘)"
-                }
-            } else {
-                customItem.title = "自訂時間 (分鐘)..."
-            }
-        }
-    }
-
-    @objc private func toggleHideWhenDisconnected() {
-        hideWhenDisconnected.toggle()
-        UserDefaults.standard.set(hideWhenDisconnected, forKey: "HideWhenDisconnected")
-        hideWhenDisconnectedMenuItem.state = hideWhenDisconnected ? .on : .off
-
-        if hideWhenDisconnected && !isConnected {
-            statusItem.isVisible = false
-        } else {
-            statusItem.isVisible = true
-        }
-    }
-
-    @objc private func showDashboardAction() {
-        showWindow(tab: .dashboard)
-    }
-
     @objc private func showSettingsAction() {
-        showWindow(tab: .settings)
-    }
-
-    private func showWindow(tab: DashboardWindowController.WindowTab) {
-        if dashboardController == nil {
-            dashboardController = DashboardWindowController.shared
-            dashboardController?.onRefreshRequested = { [weak self] in
-                self?.bluetoothManager.manualRefresh()
-            }
-            dashboardController?.onIntervalChanged = { [weak self] sec in
-                self?.bluetoothManager.setRefreshInterval(sec)
-                self?.refreshIntervalMenuChecks()
-            }
-            dashboardController?.onStyleChanged = { [weak self] style in
-                self?.displayStyle = style
-                UserDefaults.standard.set(style.rawValue, forKey: "DisplayStyle")
-                self?.updateTitle()
-                self?.refreshStyleMenuChecks()
-            }
-            dashboardController?.onHideWhenDisconnectedChanged = { [weak self] hide in
-                self?.hideWhenDisconnected = hide
-                UserDefaults.standard.set(hide, forKey: "HideWhenDisconnected")
-                self?.hideWhenDisconnectedMenuItem.state = hide ? .on : .off
-                if hide && !(self?.isConnected ?? false) {
-                    self?.statusItem.isVisible = false
-                } else {
-                    self?.statusItem.isVisible = true
-                }
-            }
-            dashboardController?.onSettingsChanged = { [weak self] in
-                self?.updateGeofenceMenuState()
-                self?.refreshIntervalMenuChecks()
-                self?.refreshStyleMenuChecks()
-                self?.updateTitle()
-            }
-        }
-        if let r = bluetoothManager.currentReading {
-            dashboardController?.updateReading(r)
+        if popover.isShown {
+            dashboardController?.switchTab(.settings)
         } else {
-            dashboardController?.reloadData()
+            togglePopover(tab: .settings)
         }
-        dashboardController?.updatePresenceStatus()
-        NSApp.activate(ignoringOtherApps: true)
-        dashboardController?.show(tab: tab)
     }
 
-    @objc private func handleRefresh() {
+    private func handleRefresh() {
         statusItem.isVisible = true
-        statusMenuItem.title = "狀態: 正在連線重新整理..."
+        dashboardController?.updateStatusText("正在連線重新整理...")
         bluetoothManager.manualRefresh()
-    }
-
-    @objc private func setDisplayStatsBadge() {
-        displayStyle = .statsBadge
-        UserDefaults.standard.set(DisplayStyle.statsBadge.rawValue, forKey: "DisplayStyle")
-        updateTitle()
-        refreshStyleMenuChecks()
-    }
-
-    @objc private func setDisplayStacked() {
-        displayStyle = .stacked
-        UserDefaults.standard.set(DisplayStyle.stacked.rawValue, forKey: "DisplayStyle")
-        updateTitle()
-        refreshStyleMenuChecks()
-    }
-
-    @objc private func setDisplayHorizontal() {
-        displayStyle = .horizontal
-        UserDefaults.standard.set(DisplayStyle.horizontal.rawValue, forKey: "DisplayStyle")
-        updateTitle()
-        refreshStyleMenuChecks()
-    }
-
-    @objc private func setDisplayTempOnly() {
-        displayStyle = .tempOnly
-        UserDefaults.standard.set(DisplayStyle.tempOnly.rawValue, forKey: "DisplayStyle")
-        updateTitle()
-        refreshStyleMenuChecks()
-    }
-
-    @objc private func setDisplayCompact() {
-        displayStyle = .compact
-        UserDefaults.standard.set(DisplayStyle.compact.rawValue, forKey: "DisplayStyle")
-        updateTitle()
-        refreshStyleMenuChecks()
-    }
-
-    private func refreshStyleMenuChecks() {
-        if let styleMenu = statusItem.menu?.items.first(where: { $0.title == "狀態列樣式" })?.submenu {
-            styleMenu.items[0].state = (displayStyle == .statsBadge) ? .on : .off
-            styleMenu.items[1].state = (displayStyle == .stacked) ? .on : .off
-            styleMenu.items[2].state = (displayStyle == .horizontal) ? .on : .off
-            styleMenu.items[3].state = (displayStyle == .tempOnly) ? .on : .off
-            styleMenu.items[4].state = (displayStyle == .compact) ? .on : .off
-        }
-    }
-
-    @objc private func toggleLowBatteryNotification(_ sender: NSMenuItem) {
-        NotificationManager.shared.isEnabled.toggle()
-        sender.state = NotificationManager.shared.isEnabled ? .on : .off
-        mijiaLog("低電量通知設定變更: \(NotificationManager.shared.isEnabled ? "開啟" : "關閉")")
-    }
-
-    // MARK: - 居家大範圍地理圍欄與 Wi-Fi 自動感應選單
-    private func setupGeofenceMenu(parentMenu: NSMenu) {
-        geofenceSubMenu = NSMenu()
-
-        // --- 1. 指定 Wi-Fi (SSID) 綁定區塊 ---
-        wifiToggleMenuItem = NSMenuItem(
-            title: "📶 僅在指定 Wi-Fi (SSID) 時連線",
-            action: #selector(handleToggleWiFiOnly),
-            keyEquivalent: ""
-        )
-        wifiToggleMenuItem.target = self
-        geofenceSubMenu.addItem(wifiToggleMenuItem)
-
-        wifiSetSSIDMenuItem = NSMenuItem(
-            title: "⚙️ 設定指定 Wi-Fi 名稱...",
-            action: #selector(handleSetTargetWiFi),
-            keyEquivalent: ""
-        )
-        wifiSetSSIDMenuItem.target = self
-        geofenceSubMenu.addItem(wifiSetSSIDMenuItem)
-
-        wifiClearMenuItem = NSMenuItem(
-            title: "❌ 清除指定 Wi-Fi 設定",
-            action: #selector(handleClearTargetWiFi),
-            keyEquivalent: ""
-        )
-        wifiClearMenuItem.target = self
-        geofenceSubMenu.addItem(wifiClearMenuItem)
-
-        geofenceSubMenu.addItem(NSMenuItem.separator())
-
-        // --- 2. GPS 居家大範圍地理圍欄區塊 ---
-        geofenceToggleMenuItem = NSMenuItem(
-            title: "📍 啟用 GPS 居家大範圍圍欄 (離家徹底停機)",
-            action: #selector(handleToggleGeofence),
-            keyEquivalent: ""
-        )
-        geofenceToggleMenuItem.target = self
-        geofenceSubMenu.addItem(geofenceToggleMenuItem)
-
-        let recordItem = NSMenuItem(
-            title: "📌 記錄目前位置為居家中心",
-            action: #selector(handleRecordHomeLocation),
-            keyEquivalent: ""
-        )
-        recordItem.target = self
-        geofenceSubMenu.addItem(recordItem)
-
-        // 半徑設定 (100m, 200m, 500m, 1000m)
-        let radiusSubMenu = NSMenu()
-        let radii: [Double] = [100.0, 200.0, 500.0, 1000.0]
-        geofenceRadiusMenuItems.removeAll()
-        for r in radii {
-            let item = NSMenuItem(title: "\(Int(r)) 公尺", action: #selector(handleSelectRadius(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = r
-            item.state = (abs(LocationGatekeeper.shared.geofenceRadius - r) < 1.0) ? .on : .off
-            geofenceRadiusMenuItems.append(item)
-            radiusSubMenu.addItem(item)
-        }
-        let radiusParent = NSMenuItem(title: "圍欄感應半徑", action: nil, keyEquivalent: "")
-        radiusParent.submenu = radiusSubMenu
-        geofenceSubMenu.addItem(radiusParent)
-
-        let clearItem = NSMenuItem(
-            title: "❌ 清除居家位置設定",
-            action: #selector(handleClearHomeLocation),
-            keyEquivalent: ""
-        )
-        clearItem.target = self
-        geofenceSubMenu.addItem(clearItem)
-
-        geofenceSubMenu.addItem(NSMenuItem.separator())
-
-        // --- 3. 狀態提示項目 ---
-        geofenceStatusMenuItem = NSMenuItem(title: "狀態: 正常運作", action: nil, keyEquivalent: "")
-        geofenceStatusMenuItem.isEnabled = false
-        geofenceSubMenu.addItem(geofenceStatusMenuItem)
-
-        let geofenceParent = NSMenuItem(title: "📍 居家與網路自動感應 (離家離網停機)", action: nil, keyEquivalent: "")
-        geofenceParent.submenu = geofenceSubMenu
-        parentMenu.addItem(geofenceParent)
-
-        updateGeofenceMenuState()
-    }
-
-    @objc private func handleToggleWiFiOnly() {
-        if LocationGatekeeper.shared.targetWiFiSSID == nil {
-            handleSetTargetWiFi()
-            return
-        }
-        LocationGatekeeper.shared.isWiFiOnlyEnabled.toggle()
-        updateGeofenceMenuState()
-    }
-
-    @objc private func handleSetTargetWiFi() {
-        let alert = NSAlert()
-        alert.messageText = "設定指定 Wi-Fi (SSID)"
-        alert.informativeText = "請輸入您家中的 Wi-Fi 名稱 (SSID)。\n當電腦連上此 Wi-Fi 時才會喚醒藍牙掃描；離開此 Wi-Fi 或斷網時將徹底休眠停機，達成 0 耗電。"
-        alert.addButton(withTitle: "儲存並啟用")
-        alert.addButton(withTitle: "取消")
-
-        let containerView = NSView(frame: NSRect(x: 0, y: 0, width: 280, height: 60))
-        let input = NSTextField(frame: NSRect(x: 0, y: 32, width: 280, height: 24))
-        var defaultSSID = LocationGatekeeper.shared.targetWiFiSSID ?? ""
-        if defaultSSID.isEmpty, let currentSSID = CWWiFiClient.shared().interface()?.ssid(), !currentSSID.isEmpty {
-            defaultSSID = currentSSID
-        }
-        input.stringValue = defaultSSID
-        input.placeholderString = "例如: Home_5G"
-        containerView.addSubview(input)
-
-        let checkbox = NSButton(checkboxWithTitle: "鎖定當前路由器硬體 (免定位權限雙重保險)", target: nil, action: nil)
-        checkbox.frame = NSRect(x: 0, y: 4, width: 280, height: 22)
-        checkbox.state = .on
-        containerView.addSubview(checkbox)
-
-        alert.accessoryView = containerView
-
-        NSApp.activate(ignoringOtherApps: true)
-        let response = alert.runModal()
-        if response == .alertFirstButtonReturn {
-            let ssid = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !ssid.isEmpty {
-                let bindGateway = (checkbox.state == .on)
-                LocationGatekeeper.shared.setTargetWiFi(ssid: ssid, bindCurrentGateway: bindGateway)
-                updateGeofenceMenuState()
-                let okAlert = NSAlert()
-                okAlert.messageText = "Wi-Fi 綁定成功"
-                okAlert.informativeText = "已綁定 Wi-Fi: \(ssid)\n現在僅在連上該 Wi-Fi 時才會與溫濕度計連線；其餘網路或斷網時將徹底休眠。"
-                okAlert.runModal()
-            }
-        }
-    }
-
-    @objc private func handleClearTargetWiFi() {
-        LocationGatekeeper.shared.clearWiFiSettings()
-        updateGeofenceMenuState()
-    }
-
-    @objc private func handleToggleGeofence() {
-        if !LocationGatekeeper.shared.hasHomeLocation {
-            handleRecordHomeLocation()
-            return
-        }
-        LocationGatekeeper.shared.isEnabled.toggle()
-        updateGeofenceMenuState()
-    }
-
-    @objc private func handleRecordHomeLocation() {
-        let alert = NSAlert()
-        alert.messageText = "設定居家中心位置"
-        alert.informativeText = "即將使用您目前的定位座標與連線網路作為「家」的大範圍參考中心。確定要將目前位置設為居家中心嗎？"
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "確定設定")
-        alert.addButton(withTitle: "取消")
-        if alert.runModal() == .alertFirstButtonReturn {
-            LocationGatekeeper.shared.recordCurrentAsHome { [weak self] success, msg in
-                DispatchQueue.main.async {
-                    self?.updateGeofenceMenuState()
-                    let resultAlert = NSAlert()
-                    resultAlert.messageText = success ? "居家位置設定成功" : "設定提示"
-                    resultAlert.informativeText = msg
-                    resultAlert.runModal()
-                }
-            }
-        }
-    }
-
-    @objc private func handleSelectRadius(_ sender: NSMenuItem) {
-        guard let r = sender.representedObject as? Double else { return }
-        LocationGatekeeper.shared.geofenceRadius = r
-        for item in geofenceRadiusMenuItems {
-            if let ir = item.representedObject as? Double {
-                item.state = (abs(ir - r) < 1.0) ? .on : .off
-            }
-        }
-        updateGeofenceMenuState()
-    }
-
-    @objc private func handleClearHomeLocation() {
-        LocationGatekeeper.shared.clearHomeLocation()
-        updateGeofenceMenuState()
-    }
-
-    func updateGeofenceMenuState() {
-        // Wi-Fi 狀態項目更新
-        wifiToggleMenuItem?.state = LocationGatekeeper.shared.isWiFiOnlyEnabled ? .on : .off
-        if let ssid = LocationGatekeeper.shared.targetWiFiSSID {
-            wifiSetSSIDMenuItem?.title = "⚙️ 設定指定 Wi-Fi (目前: \(ssid))"
-            wifiClearMenuItem?.isEnabled = true
-        } else {
-            wifiSetSSIDMenuItem?.title = "⚙️ 設定指定 Wi-Fi 名稱..."
-            wifiClearMenuItem?.isEnabled = false
-        }
-
-        // GPS 地理圍欄狀態
-        geofenceToggleMenuItem?.state = LocationGatekeeper.shared.isEnabled ? .on : .off
-
-        // 綜合狀態文字提示
-        if LocationGatekeeper.shared.isWiFiOnlyEnabled {
-            let target = LocationGatekeeper.shared.targetWiFiSSID ?? "未指定"
-            if LocationGatekeeper.shared.isInHomeArea {
-                geofenceStatusMenuItem?.title = "狀態: 📶 已連上 [\(target)] (正常運作)"
-            } else {
-                geofenceStatusMenuItem?.title = "狀態: 🚗 未在 [\(target)] (已休眠停機)"
-            }
-        } else if LocationGatekeeper.shared.isEnabled {
-            if !LocationGatekeeper.shared.hasHomeLocation {
-                geofenceStatusMenuItem?.title = "狀態: 尚未設定居家位置"
-            } else {
-                let isHome = LocationGatekeeper.shared.isInHomeArea
-                if let dist = LocationGatekeeper.shared.lastKnownDistance {
-                    geofenceStatusMenuItem?.title = isHome ?
-                        String(format: "狀態: 🏠 範圍內 (距家 %.0fm)", dist) :
-                        String(format: "狀態: 🚗 範圍外 (距家 %.0fm · 停機)", dist)
-                } else {
-                    geofenceStatusMenuItem?.title = isHome ? "狀態: 🏠 在家範圍內 (運行中)" : "狀態: 🚗 範圍外 (藍牙停機中)"
-                }
-            }
-        } else {
-            geofenceStatusMenuItem?.title = "狀態: 未啟用自動感應 (持續運作)"
-        }
     }
 
     @objc private func handleQuit() {
@@ -850,17 +399,20 @@ final class StatusBarController: NSObject {
 // MARK: - BluetoothManagerDelegate
 extension StatusBarController: BluetoothManagerDelegate {
     func didUpdateStatus(_ status: String) {
-        statusMenuItem.title = "狀態: \(status)"
         dashboardController?.updateStatusText(status)
 
-        if status.contains("連線中斷") || status.contains("失敗") || status.contains("關閉") || status.contains("範圍") {
-            isConnected = false
-            if hideWhenDisconnected {
-                statusItem.isVisible = false
-            }
-        } else if bluetoothManager.currentReading == nil {
+        if bluetoothManager.currentReading == nil && isConnected == false {
             statusItem.button?.image = nil
             statusItem.button?.title = "🌡️ \(status)"
+        }
+    }
+
+    func didChangeReachability(_ reachable: Bool) {
+        guard !reachable else { return }
+        isConnected = false
+        if hideWhenDisconnected {
+            popover.performClose(nil)
+            statusItem.isVisible = false
         }
     }
 
@@ -871,46 +423,37 @@ extension StatusBarController: BluetoothManagerDelegate {
         latestReading = reading
 
         statusItem.isVisible = true
-        updateTitle()
-        applyReadingToMenu(reading)
 
-        // 記錄歷史數據並同步儀表板
+        // 先寫入歷史，面板與儀表板重繪時才包含這一筆
         HistoryManager.shared.addPoint(
             temp: reading.temperature,
             hum: reading.humidity,
             volt: reading.voltage,
             battery: reading.batteryPercent
         )
+        updateTitle()
         dashboardController?.updateReading(reading)
         NotificationManager.shared.checkReading(reading)
     }
 
-    private func applyReadingToMenu(_ reading: SensorReading) {
-        headerMenuItem.title = reading.deviceName
-        tempMenuItem.title = String(format: "溫度: %.1f °C", reading.temperature)
-        humMenuItem.title = String(format: "濕度: %.1f %%", reading.humidity)
-        if reading.batteryPercent <= 15 || reading.voltage <= 2.60 {
-            batMenuItem.title = String(format: "⚠️ 電量過低: %d %% (%.3fV) - 請換電池", reading.batteryPercent, reading.voltage)
-        } else {
-            batMenuItem.title = String(format: "電量: %d %% (%.3fV)", reading.batteryPercent, reading.voltage)
-        }
-        modeMenuItem.title = "連線模式: \(reading.mode)"
-
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        timeMenuItem.title = "最後更新: \(formatter.string(from: reading.lastUpdated))"
-        statusMenuItem.title = "狀態: 正常運作中"
-    }
-
     func didFailWithError(_ error: String) {
-        statusMenuItem.title = "提示: \(error)"
+        dashboardController?.updateStatusText(error)
     }
 }
 
 // MARK: - LocationGatekeeperDelegate
 extension StatusBarController: LocationGatekeeperDelegate {
     func locationGatekeeperDidChangeState(isHome: Bool, reason: String) {
-        updateGeofenceMenuState()
         dashboardController?.updatePresenceStatus()
+    }
+}
+
+// MARK: - NSPopoverDelegate
+extension StatusBarController: NSPopoverDelegate {
+    func popoverDidClose(_ notification: Notification) {
+        if let monitor = outsideClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            outsideClickMonitor = nil
+        }
     }
 }

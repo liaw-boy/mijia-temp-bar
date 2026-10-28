@@ -14,6 +14,12 @@ final class ChartView: NSView {
         }
     }
 
+    /// 只顯示最近 N 秒的資料；nil 表示全部
+    var timeRange: TimeInterval? {
+        didSet { applyRange() }
+    }
+
+    private var allPoints: [HistoryPoint] = []
     private var points: [HistoryPoint] = []
     private var trackingArea: NSTrackingArea?
     private var hoveredPoint: HistoryPoint?
@@ -34,8 +40,20 @@ final class ChartView: NSView {
     }
 
     func updatePoints(_ newPoints: [HistoryPoint]) {
-        self.points = newPoints
-        self.needsDisplay = true
+        allPoints = newPoints
+        applyRange()
+    }
+
+    private func applyRange() {
+        if let range = timeRange, let last = allPoints.last {
+            let cutoff = last.timestamp.addingTimeInterval(-range)
+            points = allPoints.filter { $0.timestamp >= cutoff }
+        } else {
+            points = allPoints
+        }
+        hoveredPoint = nil
+        hoveredPointCoord = nil
+        needsDisplay = true
     }
 
     override func updateTrackingAreas() {
@@ -59,7 +77,7 @@ final class ChartView: NSView {
               let endTime = points.last?.timestamp else { return }
 
         let isOverview = (dataType == .overview)
-        let graphRect = NSRect(x: 54, y: 34, width: bounds.width - (isOverview ? 104 : 76), height: bounds.height - 54)
+        let graphRect = NSRect(x: 58, y: 34, width: bounds.width - (isOverview ? 118 : 82), height: bounds.height - 54)
 
         if graphRect.contains(location) {
             let totalSpan = max(60.0, endTime.timeIntervalSince(startTime))
@@ -103,7 +121,7 @@ final class ChartView: NSView {
 
         let b = bounds
         let isOverview = (dataType == .overview)
-        let graphRect = NSRect(x: 54, y: 34, width: b.width - (isOverview ? 104 : 76), height: b.height - 54)
+        let graphRect = NSRect(x: 58, y: 34, width: b.width - (isOverview ? 118 : 82), height: b.height - 54)
 
         if points.isEmpty {
             let emptyMsg = "尚無採樣數據，設備連線後將自動繪製..." as NSString
@@ -137,25 +155,18 @@ final class ChartView: NSView {
             .foregroundColor: NSColor(white: 0.55, alpha: 1.0)
         ]
         let df = DateFormatter()
-        df.dateFormat = "HH:mm"
 
-        // 計算整點/半小時時間標記
-        let stepInterval: TimeInterval
-        if totalSpan > 3600 * 6 {
-            stepInterval = 3600 * 2 // 2 小時一格
-        } else if totalSpan > 3600 * 2 {
-            stepInterval = 3600     // 1 小時一格
-        } else if totalSpan > 1800 {
-            stepInterval = 1800     // 30 分鐘一格
-        } else {
-            stepInterval = 600      // 10 分鐘一格
-        }
+        // 依圖表寬度挑選刻度間距，避免長時間跨度時標籤擠成一團
+        let maxLabels = max(2.0, Double(graphRect.width) / 80.0)
+        let candidates: [TimeInterval] = [600, 1800, 3600, 7200, 14400, 21600, 43200, 86400, 172800, 604800]
+        let stepInterval = candidates.first { totalSpan / $0 <= maxLabels } ?? 604800
+        df.dateFormat = stepInterval >= 86400 ? "M/d" : "HH:mm"
 
         let cal = Calendar.current
         var current = startTime
-        // 對齊到最近的整點時間
-        let startComponents = cal.dateComponents([.year, .month, .day, .hour], from: startTime)
-        if let baseDate = cal.date(from: startComponents) {
+        // 對齊到最近的整點 (跨日刻度則對齊到當日零點)
+        let alignComponents: Set<Calendar.Component> = stepInterval >= 86400 ? [.year, .month, .day] : [.year, .month, .day, .hour]
+        if let baseDate = cal.date(from: cal.dateComponents(alignComponents, from: startTime)) {
             current = baseDate
             while current < startTime {
                 current = current.addingTimeInterval(stepInterval)
@@ -164,7 +175,7 @@ final class ChartView: NSView {
 
         while current <= endTime {
             let ratio = CGFloat(current.timeIntervalSince(startTime) / totalSpan)
-            if ratio >= 0.05 && ratio <= 0.95 {
+            if ratio >= 0.12 && ratio <= 0.88 {
                 let x = graphRect.minX + ratio * graphRect.width
 
                 // 垂直虛線
@@ -197,8 +208,8 @@ final class ChartView: NSView {
     private func drawOverviewMode(in ctx: CGContext, graphRect: NSRect, startTime: Date, totalSpan: TimeInterval) {
         let temps = points.map { $0.temperature }
         let hums = points.map { $0.humidity }
-        let bats = points.map { Double($0.batteryPercent) }
 
+        let bats = points.map { Double($0.batteryPercent) }
         let rawMinT = temps.min() ?? 20.0
         let rawMaxT = temps.max() ?? 30.0
         let minT = floor(rawMinT * 2.0) / 2.0 - 0.5
@@ -251,12 +262,12 @@ final class ChartView: NSView {
             let valT = minT + Double(ratio) * tempRange
             let strT = String(format: "%.1f°", valT) as NSString
             let szT = strT.size(withAttributes: labelAttrsT)
-            strT.draw(at: NSPoint(x: graphRect.minX - szT.width - 6, y: y - szT.height / 2), withAttributes: labelAttrsT)
+            strT.draw(at: NSPoint(x: graphRect.minX - szT.width - 14, y: y - szT.height / 2), withAttributes: labelAttrsT)
 
             let valPct = minPct + Double(ratio) * pctRange
             let strPct = String(format: "%.0f%%", valPct) as NSString
             let szPct = strPct.size(withAttributes: labelAttrsPct)
-            strPct.draw(at: NSPoint(x: graphRect.maxX + 6, y: y - szPct.height / 2), withAttributes: labelAttrsPct)
+            strPct.draw(at: NSPoint(x: graphRect.maxX + 14, y: y - szPct.height / 2), withAttributes: labelAttrsPct)
         }
         ctx.setLineDash(phase: 0, lengths: [])
 
@@ -308,7 +319,7 @@ final class ChartView: NSView {
 
             let df = DateFormatter()
             df.dateFormat = "HH:mm:ss"
-            let text = "\(df.string(from: hPoint.timestamp))  ·  🌡️ \(String(format: "%.1f°C", hPoint.temperature))   💧 \(String(format: "%.0f%%", hPoint.humidity))   🔋 \(hPoint.batteryPercent)%"
+            let text = "\(df.string(from: hPoint.timestamp))  ·  溫度 \(String(format: "%.1f°C", hPoint.temperature))   濕度 \(String(format: "%.0f%%", hPoint.humidity))   電量 \(hPoint.batteryPercent)%"
             let topY = max(yT, max(yH, yB))
             drawHUDTooltip(text: text, at: CGPoint(x: x, y: topY + 14), graphRect: graphRect, in: ctx)
         }
@@ -384,7 +395,7 @@ final class ChartView: NSView {
 
             let str = String(format: valFormat, val) as NSString
             let sz = str.size(withAttributes: labelAttrs)
-            str.draw(at: NSPoint(x: graphRect.minX - sz.width - 6, y: y - sz.height / 2), withAttributes: labelAttrs)
+            str.draw(at: NSPoint(x: graphRect.minX - sz.width - 14, y: y - sz.height / 2), withAttributes: labelAttrs)
         }
         ctx.setLineDash(phase: 0, lengths: [])
 
@@ -425,9 +436,9 @@ final class ChartView: NSView {
             df.dateFormat = "HH:mm:ss"
             let text: String
             switch dataType {
-            case .temperature: text = "\(df.string(from: hPoint.timestamp))  ·  🌡️ \(String(format: "%.1f °C", val))"
-            case .humidity: text = "\(df.string(from: hPoint.timestamp))  ·  💧 \(String(format: "%.0f %%", val))"
-            case .voltage: text = "\(df.string(from: hPoint.timestamp))  ·  🔋 \(String(format: "%.3f V", val)) (\(hPoint.batteryPercent)%)"
+            case .temperature: text = "\(df.string(from: hPoint.timestamp))  ·  溫度 \(String(format: "%.1f °C", val))"
+            case .humidity: text = "\(df.string(from: hPoint.timestamp))  ·  濕度 \(String(format: "%.0f %%", val))"
+            case .voltage: text = "\(df.string(from: hPoint.timestamp))  ·  電壓 \(String(format: "%.3f V", val)) (\(hPoint.batteryPercent)%)"
             default: text = ""
             }
 

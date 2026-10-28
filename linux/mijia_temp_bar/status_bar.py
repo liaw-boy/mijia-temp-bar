@@ -17,7 +17,7 @@ except (ValueError, ImportError):
     gi.require_version("AppIndicator3", "0.1")
     from gi.repository import AppIndicator3 as AppIndicator  # noqa: E402
 
-from . import autostart  # noqa: E402
+from . import autostart, notifications  # noqa: E402
 from .bluetooth import BluetoothManager  # noqa: E402
 from .history import HistoryManager  # noqa: E402
 from .icons import TrayIconWriter, render_stacked, render_stats_badge, render_text  # noqa: E402
@@ -245,6 +245,12 @@ class StatusBarController:
         self.hide_when_disconnected_item.connect("activate", self._toggle_hide_when_disconnected)
         menu.append(self.hide_when_disconnected_item)
 
+        # 低電量通知開關
+        self.low_battery_item = Gtk.CheckMenuItem.new_with_label("低電量通知 (≤ 15%)")
+        self.low_battery_item.set_active(notifications.is_enabled())
+        self.low_battery_item.connect("activate", self._toggle_low_battery)
+        menu.append(self.low_battery_item)
+
         # 樣式切換子選單
         style_menu = Gtk.Menu()
         self._style_items: List[Tuple[Gtk.RadioMenuItem, DisplayStyle]] = []
@@ -343,6 +349,11 @@ class StatusBarController:
         settings.set("HideWhenDisconnected", self.hide_when_disconnected)
         self._set_visible(not (self.hide_when_disconnected and not self.is_connected))
 
+    def _toggle_low_battery(self, item: Gtk.CheckMenuItem) -> None:
+        if self._updating_menu:
+            return
+        notifications.set_enabled(item.get_active())
+
     def _toggle_autostart(self, item: Gtk.CheckMenuItem) -> None:
         try:
             autostart.set_enabled(item.get_active())
@@ -411,6 +422,7 @@ class StatusBarController:
             )
         if self.dashboard is not None:
             self.dashboard.update_reading(reading)
+        notifications.check_reading(self.app, reading, time.time())
 
     def _apply_reading_to_menu(self, reading: SensorReading) -> None:
         self.header_item.set_label(reading.device_name)

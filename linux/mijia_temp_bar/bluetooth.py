@@ -19,6 +19,7 @@ from bleak.exc import (
     BleakError,
 )
 
+from .backoff import retry_delay
 from .logger import mijia_log
 from .parsers import (
     Measurement,
@@ -39,7 +40,6 @@ BTHOME_UUID = "0000fcd2-0000-1000-8000-00805f9b34fb"
 STATUS_JSON_PATH = RUNTIME_DIR / "mijia_status.json"
 
 CONNECT_TIMEOUT = 25.0         # 給予充足時間接收低功耗廣播封包並完成連線
-RETRY_AFTER_FAILURE = 60.0     # 連線失敗後最快多久重試 (不超過使用者設定的間隔)
 BLUETOOTH_RETRY = 15.0         # 藍牙未開啟時的重新檢查間隔
 BROADCAST_MIN_INTERVAL = 10.0  # 開源廣播模式下最短的介面更新間隔
 
@@ -73,6 +73,7 @@ class BluetoothManager:
         self._poll_handle: Optional[asyncio.TimerHandle] = None
         self._next_update_time: Optional[datetime] = None
         self._last_broadcast_emit = 0.0
+        self._consecutive_failures = 0
 
         mijia_log(f"BluetoothManager 初始化 (省電輪詢模式，設定間隔: {int(self.refresh_interval)} 秒)...")
 
@@ -90,6 +91,7 @@ class BluetoothManager:
 
     def manual_refresh(self) -> None:
         mijia_log("手動要求立即重新整理...")
+        self._consecutive_failures = 0
         self._loop.call_soon_threadsafe(self._connect_and_fetch)
 
     def shutdown(self) -> None:
@@ -135,14 +137,15 @@ class BluetoothManager:
         except (asyncio.TimeoutError, BleakDeviceNotFoundError):
             mijia_log("連線超時 (可能設備暫時超出範圍)，取消並排定下次重試...")
             self._emit_status("設備未在連線範圍內", reachable=False)
-            self._plan_next_poll(min(self.refresh_interval, RETRY_AFTER_FAILURE))
+            self._plan_retry()
             return
         except Exception as e:
             mijia_log(f"連線失敗: {e or type(e).__name__}")
             self._emit_status("連線失敗，等待下次輪詢", reachable=False)
-            self._plan_next_poll(min(self.refresh_interval, RETRY_AFTER_FAILURE))
+            self._plan_retry()
             return
 
+        self._consecutive_failures = 0
         self._publish(reading, "已連線運作中")
         self._plan_next_poll()
         mijia_log("設備已成功進入省電休眠。")
@@ -240,6 +243,12 @@ class BluetoothManager:
         delay = self.refresh_interval if delay is None else delay
         self._next_update_time = datetime.now() + timedelta(seconds=delay)
         self._poll_handle = self._loop.call_later(delay, self._on_poll_timer)
+
+    def _plan_retry(self) -> None:
+        self._consecutive_failures += 1
+        delay = retry_delay(self._consecutive_failures, self.refresh_interval)
+        mijia_log(f"離線退避 (連續失敗 {self._consecutive_failures} 次)，{int(delay)} 秒後重試")
+        self._plan_next_poll(delay)
 
     def _cancel_poll(self) -> None:
         if self._poll_handle is not None:

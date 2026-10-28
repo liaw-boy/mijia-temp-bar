@@ -134,6 +134,34 @@ final class LocationGatekeeper: NSObject, CLLocationManagerDelegate {
         }
     }
 
+    // MARK: - 讀取目前連線的 Wi-Fi 名稱 (macOS 需定位授權才讀得到 SSID)
+    private var pendingSSIDCompletion: ((String?, String?) -> Void)?
+
+    func readCurrentSSID(completion: @escaping (String?, String?) -> Void) {
+        switch locationManager.authorizationStatus {
+        case .denied, .restricted:
+            completion(nil, "定位權限被拒絕：請至 系統設定 > 隱私權與安全性 > 定位服務 開啟")
+        case .notDetermined:
+            pendingSSIDCompletion = completion
+            locationManager.requestWhenInUseAuthorization()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
+                guard let pending = self?.pendingSSIDCompletion else { return }
+                self?.pendingSSIDCompletion = nil
+                pending(nil, "尚未回應定位授權，請再按一次")
+            }
+        default:
+            deliverCurrentSSID(completion)
+        }
+    }
+
+    private func deliverCurrentSSID(_ completion: (String?, String?) -> Void) {
+        if let ssid = CWWiFiClient.shared().interface()?.ssid(), !ssid.isEmpty {
+            completion(ssid, nil)
+        } else {
+            completion(nil, "讀不到目前的 Wi-Fi，請確認已連上")
+        }
+    }
+
     /// 設定目前所在位置與目前網路閘道為「居家位置」
     func recordCurrentAsHome(completion: @escaping (Bool, String) -> Void) {
         requestAuthorizationIfNeeded()
@@ -391,6 +419,14 @@ final class LocationGatekeeper: NSObject, CLLocationManagerDelegate {
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         if #available(macOS 11.0, *) {
             mijiaLog("[Location] 定位授權狀態: \(manager.authorizationStatus.rawValue)")
+            if let pending = pendingSSIDCompletion, manager.authorizationStatus != .notDetermined {
+                pendingSSIDCompletion = nil
+                if manager.authorizationStatus == .denied || manager.authorizationStatus == .restricted {
+                    pending(nil, "定位權限被拒絕：請至 系統設定 > 隱私權與安全性 > 定位服務 開啟")
+                } else {
+                    deliverCurrentSSID(pending)
+                }
+            }
             if manager.authorizationStatus == .authorizedAlways || manager.authorizationStatus == .authorized {
                 manager.startUpdatingLocation()
             }

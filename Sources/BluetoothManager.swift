@@ -16,6 +16,11 @@ protocol BluetoothManagerDelegate: AnyObject {
     func didUpdateStatus(_ status: String)
     func didUpdateReading(_ reading: SensorReading)
     func didFailWithError(_ error: String)
+    func didChangeReachability(_ reachable: Bool)
+}
+
+extension BluetoothManagerDelegate {
+    func didChangeReachability(_ reachable: Bool) {}
 }
 
 final class BluetoothManager: NSObject {
@@ -120,7 +125,9 @@ final class BluetoothManager: NSObject {
                 guard let self = self else { return }
                 mijiaLog("連線超時 (設備未在連線範圍內)，取消並排定指數退避重試...")
                 self.centralManager.cancelPeripheralConnection(p)
+                self.isSleepingBetweenPolls = false
                 self.delegate?.didUpdateStatus("設備未在連線範圍內")
+                self.delegate?.didChangeReachability(false)
                 self.planNextPoll(isRetry: true)
             }
 
@@ -228,7 +235,7 @@ final class BluetoothManager: NSObject {
             dict["mode"] = r.mode
         }
         if let data = try? JSONSerialization.data(withJSONObject: dict, options: .prettyPrinted) {
-            try? data.write(to: URL(fileURLWithPath: "/tmp/mijia_status.json"))
+            try? data.write(to: AppPaths.statusJSON, options: .atomic)
         }
     }
 }
@@ -243,6 +250,7 @@ extension BluetoothManager: CBCentralManagerDelegate {
         case .poweredOff:
             mijiaLog("錯誤: 電腦藍牙已關閉")
             delegate?.didUpdateStatus("電腦藍牙已關閉")
+            delegate?.didChangeReachability(false)
             delegate?.didFailWithError("請在 Mac 控制中心開啟藍牙")
             saveStatusJSON(status: "電腦藍牙已關閉")
         case .unauthorized:
@@ -297,7 +305,9 @@ extension BluetoothManager: CBCentralManagerDelegate {
         connectTimeoutTimer?.invalidate()
         connectTimeoutTimer = nil
         mijiaLog("連線失敗: \(error?.localizedDescription ?? "未知原因")")
+        isSleepingBetweenPolls = false
         delegate?.didUpdateStatus("連線失敗，等待下次輪詢")
+        delegate?.didChangeReachability(false)
         planNextPoll(isRetry: true)
     }
 
@@ -446,36 +456,49 @@ private extension BluetoothManager {
 
     func parseBTHomeData(_ data: Data, name: String, rssi: Int) -> Bool {
         guard data.count >= 5 else { return false }
+        // 加密封包 (bit0) 需要 bindkey，不處理
+        if data[data.startIndex] & 0x01 != 0 { return false }
+
+        // BTHome v2 物件 ID -> 資料長度；遇到未知物件無法得知長度，停止解析
+        let sizes: [UInt8: Int] = [
+            0x00: 1, 0x01: 1, 0x02: 2, 0x03: 2, 0x0C: 2, 0x0F: 1,
+            0x10: 1, 0x11: 1, 0x2E: 1, 0x3A: 1, 0x45: 2
+        ]
+        let bytes = [UInt8](data)
         var index = 1
         var temp: Double?
         var hum: Double?
         var bat: Int?
+        var volt: Double?
 
-        while index < data.count {
-            let objectId = data[index]
-            index += 1
-            if objectId == 0x01 && index < data.count {
-                bat = Int(data[index])
-                index += 1
-            } else if objectId == 0x02 && index + 1 < data.count {
-                let val = Int16(data[index]) | (Int16(data[index+1]) << 8)
-                temp = Double(val) * 0.01
-                index += 2
-            } else if objectId == 0x03 && index + 1 < data.count {
-                let val = UInt16(data[index]) | (UInt16(data[index+1]) << 8)
-                hum = Double(val) * 0.01
-                index += 2
-            } else {
-                index += 1
+        while index < bytes.count {
+            let objectId = bytes[index]
+            guard let size = sizes[objectId], index + 1 + size <= bytes.count else { break }
+            let v = Array(bytes[(index + 1)..<(index + 1 + size)])
+            switch objectId {
+            case 0x01: bat = Int(v[0])
+            case 0x02: temp = Double(Int16(bitPattern: UInt16(v[0]) | (UInt16(v[1]) << 8))) * 0.01
+            case 0x45: temp = Double(Int16(bitPattern: UInt16(v[0]) | (UInt16(v[1]) << 8))) * 0.1
+            case 0x03: hum = Double(UInt16(v[0]) | (UInt16(v[1]) << 8)) * 0.01
+            case 0x2E: hum = Double(v[0])
+            case 0x0C: volt = Double(UInt16(v[0]) | (UInt16(v[1]) << 8)) * 0.001
+            default: break
             }
+            index += 1 + size
         }
+
+        // 廣播資料來自附近裝置，不可信：超出合理範圍就丟棄
+        if let t = temp, !(-40.0...85.0).contains(t) { return false }
+        if let h = hum, !(0.0...100.0).contains(h) { return false }
+        if let b = bat { bat = min(100, max(0, b)) }
+        if let v = volt, !(1.8...3.7).contains(v) { volt = nil }
 
         if let t = temp, let h = hum {
             let reading = SensorReading(
                 temperature: t,
                 humidity: h,
                 batteryPercent: bat ?? 100,
-                voltage: 3.0,
+                voltage: volt ?? 3.0,
                 rssi: rssi,
                 deviceName: name,
                 lastUpdated: Date(),

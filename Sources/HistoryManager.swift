@@ -45,7 +45,7 @@ final class HistoryManager {
 
     private func saveHistory() {
         guard let data = try? JSONEncoder().encode(points) else { return }
-        try? data.write(to: storageURL)
+        try? data.write(to: storageURL, options: .atomic)
     }
 
     private func loadHistory() {
@@ -58,7 +58,7 @@ final class HistoryManager {
 
     /// 從已存在的本地日誌回填今日歷史記錄
     func backfillFromLog() {
-        let logPath = "/tmp/mijia_temp_bar.log"
+        let logPath = AppPaths.logFile.path
         guard let content = try? String(contentsOfFile: logPath, encoding: .utf8) else { return }
 
         let lines = content.components(separatedBy: .newlines)

@@ -3,7 +3,7 @@
 [![Platform](https://img.shields.io/badge/platform-Linux-lightgrey?logo=linux)](#-系統需求-requirements)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)](https://www.python.org/)
 
-MijiaTempBar 的 Linux 移植版本：在桌面系統匣（GNOME 頂部面板 / KDE 系統匣）即時顯示 **小米 / 米家藍牙溫濕度計 2（LYWSD03MMC）** 的溫濕度，功能與 macOS 版一致。
+MijiaTempBar 的 Linux 移植版本：在桌面系統匣（GNOME 頂部面板 / KDE 系統匣）即時顯示 **小米 / 米家藍牙溫濕度計 2（LYWSD03MMC）** 的溫濕度，核心功能與 macOS 版相同（不含 Wi-Fi／GPS 居家感應停機，桌面環境通常不需要）。
 
 <p>
   <img src="screenshots/tray-styles.png" alt="系統匣五種顯示樣式" height="300">
@@ -20,6 +20,8 @@ MijiaTempBar 的 Linux 移植版本：在桌面系統匣（GNOME 頂部面板 / 
 - **連線間隔**：30 秒 ~ 2 小時預設值，或自訂任意分鐘數。
 - **僅連線時顯示**：超出藍牙範圍時自動隱藏圖示，回到範圍內自動重連並重新出現。
 - **即時儀表板**：三大指標卡片、雙 Y 軸綜合總覽 / 溫度 / 濕度 / 電壓回彈折線圖、滑鼠懸停數值提示、一鍵匯出 CSV。
+- **離線指數退避**：設備連續連不上時，重試間隔依 60 秒 → 5 分鐘 → 15 分鐘拉長，避免藍牙空轉。
+- **低電量通知**：電量 ≤ 15% 或電壓 ≤ 2.60V 時發出桌面通知，24 小時內不重複，可在選單關閉。
 - **開機自動啟動**：直接在系統匣選單勾選（Linux 版新增）。
 
 ---
