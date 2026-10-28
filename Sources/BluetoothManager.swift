@@ -152,6 +152,10 @@ final class BluetoothManager: NSObject {
             delegate?.didUpdateStatus(s)
             return
         }
+        guard !isSuspended else {
+            mijiaLog("目前處於休眠停機狀態，略過藍牙掃描。")
+            return
+        }
 
         isScanning = true
         mijiaLog("開始掃描周圍藍牙設備...")

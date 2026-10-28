@@ -1,5 +1,6 @@
 import AppKit
 import CoreLocation
+import CoreWLAN
 import Network
 
 protocol LocationGatekeeperDelegate: AnyObject {
@@ -20,6 +21,8 @@ final class LocationGatekeeper: NSObject, CLLocationManagerDelegate {
     private let radiusKey = "GeofenceRadius"
     private let homeGatewayMACKey = "HomeGatewayMAC"
     private let homeGatewayIPKey = "HomeGatewayIP"
+    private let targetSSIDKey = "TargetWiFiSSID"
+    private let wifiOnlyEnabledKey = "WiFiOnlyEnabled"
 
     weak var bluetoothManager: BluetoothManager?
     weak var delegate: LocationGatekeeperDelegate?
@@ -29,13 +32,40 @@ final class LocationGatekeeper: NSObject, CLLocationManagerDelegate {
     private(set) var lastKnownDistance: Double?
     private(set) var lastKnownLocation: CLLocation?
 
+    var isWiFiOnlyEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: wifiOnlyEnabledKey) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: wifiOnlyEnabledKey)
+            if newValue {
+                startMonitoring()
+            } else if !isEnabled {
+                stopMonitoring()
+                isInHomeArea = true
+                bluetoothManager?.resume()
+            }
+            checkCurrentStatus()
+        }
+    }
+
+    var targetWiFiSSID: String? {
+        get { UserDefaults.standard.string(forKey: targetSSIDKey) }
+        set {
+            if let val = newValue, !val.trimmingCharacters(in: .whitespaces).isEmpty {
+                UserDefaults.standard.set(val.trimmingCharacters(in: .whitespaces), forKey: targetSSIDKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: targetSSIDKey)
+            }
+            checkCurrentStatus()
+        }
+    }
+
     var isEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: enabledKey) }
         set {
             UserDefaults.standard.set(newValue, forKey: enabledKey)
             if newValue {
                 startMonitoring()
-            } else {
+            } else if !isWiFiOnlyEnabled {
                 stopMonitoring()
                 isInHomeArea = true
                 bluetoothManager?.resume()
@@ -78,7 +108,7 @@ final class LocationGatekeeper: NSObject, CLLocationManagerDelegate {
         locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters // 100m 粗定位，極省電
         locationManager.distanceFilter = 50.0 // 移動 50 公尺才觸發更新
 
-        if isEnabled {
+        if isEnabled || isWiFiOnlyEnabled {
             startMonitoring()
         }
     }
@@ -177,12 +207,81 @@ final class LocationGatekeeper: NSObject, CLLocationManagerDelegate {
     }
 
     private func handleNetworkPathUpdate(_ path: NWPath) {
-        guard isEnabled else { return }
+        guard isEnabled || isWiFiOnlyEnabled else { return }
         checkCurrentStatus()
     }
 
-    // MARK: - 綜合狀態檢查 (GPS 地理圍欄 + 網路閘道)
+    /// 綁定指定 Wi-Fi SSID
+    func setTargetWiFi(ssid: String, bindCurrentGateway: Bool = true) {
+        self.targetWiFiSSID = ssid
+        if bindCurrentGateway {
+            // 同步記下當前閘道 MAC，作為備援硬體特徵 (因應 macOS 隱私防護)
+            let gateway = getCurrentGatewayInfo()
+            if let mac = gateway.mac {
+                self.homeGatewayMAC = mac
+                UserDefaults.standard.set(gateway.ip, forKey: homeGatewayIPKey)
+                mijiaLog("[WiFi] 設定目標 Wi-Fi: \(ssid)，同步記錄閘道 MAC: \(mac)")
+            } else {
+                mijiaLog("[WiFi] 設定目標 Wi-Fi: \(ssid)")
+            }
+        } else {
+            mijiaLog("[WiFi] 設定目標 Wi-Fi: \(ssid) (未綁定當前閘道 MAC)")
+        }
+        self.isWiFiOnlyEnabled = true
+        checkCurrentStatus()
+    }
+
+    func isConnectedToTargetWiFi() -> Bool {
+        guard let target = targetWiFiSSID, !target.isEmpty else { return false }
+
+        // 檢查 1：CoreWLAN SSID 比對 (若有定位權限可直接獲取)
+        if let currentSSID = CWWiFiClient.shared().interface()?.ssid(), !currentSSID.isEmpty {
+            if currentSSID.caseInsensitiveCompare(target) == .orderedSame {
+                // 自動學習並更新閘道 MAC (若尚未綁定)
+                if self.homeGatewayMAC == nil, let currentMAC = getCurrentGatewayInfo().mac {
+                    self.homeGatewayMAC = currentMAC
+                    mijiaLog("[WiFi] 自動學習並鎖定 Wi-Fi 閘道 MAC: \(currentMAC)")
+                }
+                return true
+            }
+        }
+
+        // 檢查 2：若目前網路閘道 MAC 吻合綁定時的路由器硬體 MAC
+        let gateway = getCurrentGatewayInfo()
+        if let homeMAC = homeGatewayMAC, let currentMAC = gateway.mac, homeMAC.caseInsensitiveCompare(currentMAC) == .orderedSame {
+            return true
+        }
+
+        return false
+    }
+
+    func clearWiFiSettings() {
+        UserDefaults.standard.removeObject(forKey: targetSSIDKey)
+        UserDefaults.standard.removeObject(forKey: wifiOnlyEnabledKey)
+        if !isEnabled {
+            isInHomeArea = true
+            bluetoothManager?.resume()
+        }
+        mijiaLog("[WiFi] 已清除指定 Wi-Fi 設定")
+        checkCurrentStatus()
+    }
+
+    // MARK: - 綜合狀態檢查 (指定 Wi-Fi / GPS 地理圍欄 / 網路閘道)
     func checkCurrentStatus() {
+        // 1. 若開啟了「僅在指定 Wi-Fi SSID 時連線」
+        if isWiFiOnlyEnabled {
+            guard let target = targetWiFiSSID, !target.isEmpty else { return }
+
+            let matches = isConnectedToTargetWiFi()
+            if matches {
+                updateHomeState(isHome: true, reason: "已連上指定 Wi-Fi (\(target))")
+            } else {
+                updateHomeState(isHome: false, reason: "未連線至指定 Wi-Fi (\(target))")
+            }
+            return
+        }
+
+        // 2. 否則若開啟了 GPS 地理圍欄
         guard isEnabled, hasHomeLocation else {
             if !isInHomeArea {
                 isInHomeArea = true

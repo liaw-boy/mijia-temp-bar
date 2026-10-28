@@ -1,4 +1,5 @@
 import AppKit
+import CoreWLAN
 
 enum DisplayStyle: Int {
     case statsBadge = 0 // 雙行微型膠囊風格 (TMP / HUM 雙行對齊)
@@ -32,8 +33,11 @@ final class StatusBarController: NSObject {
     private var dashboardController: DashboardWindowController?
     private var latestReading: SensorReading?
 
-    // 居家大範圍地理圍欄選單項目
+    // 居家大範圍地理圍欄與 Wi-Fi 連線選單項目
     private var geofenceSubMenu: NSMenu!
+    private var wifiToggleMenuItem: NSMenuItem!
+    private var wifiSetSSIDMenuItem: NSMenuItem!
+    private var wifiClearMenuItem: NSMenuItem!
     private var geofenceToggleMenuItem: NSMenuItem!
     private var geofenceStatusMenuItem: NSMenuItem!
     private var geofenceRadiusMenuItems: [NSMenuItem] = []
@@ -65,6 +69,7 @@ final class StatusBarController: NSObject {
 
         LocationGatekeeper.shared.bluetoothManager = bluetoothManager
         LocationGatekeeper.shared.delegate = self
+        LocationGatekeeper.shared.checkCurrentStatus()
 
         // 啟動時立刻恢復最近一次讀取的數據 (避免圖示閃爍或意外消失)
         if let last = HistoryManager.shared.points.last {
@@ -94,7 +99,9 @@ final class StatusBarController: NSObject {
             }
         }
 
-        bluetoothManager.startScan()
+        if LocationGatekeeper.shared.isInHomeArea {
+            bluetoothManager.startScan()
+        }
         refreshIntervalMenuChecks()
     }
 
@@ -572,20 +579,45 @@ final class StatusBarController: NSObject {
         mijiaLog("低電量通知設定變更: \(NotificationManager.shared.isEnabled ? "開啟" : "關閉")")
     }
 
-    // MARK: - 居家大範圍地理圍欄選單與互動
+    // MARK: - 居家大範圍地理圍欄與 Wi-Fi 自動感應選單
     private func setupGeofenceMenu(parentMenu: NSMenu) {
         geofenceSubMenu = NSMenu()
 
+        // --- 1. 指定 Wi-Fi (SSID) 綁定區塊 ---
+        wifiToggleMenuItem = NSMenuItem(
+            title: "📶 僅在指定 Wi-Fi (SSID) 時連線",
+            action: #selector(handleToggleWiFiOnly),
+            keyEquivalent: ""
+        )
+        wifiToggleMenuItem.target = self
+        geofenceSubMenu.addItem(wifiToggleMenuItem)
+
+        wifiSetSSIDMenuItem = NSMenuItem(
+            title: "⚙️ 設定指定 Wi-Fi 名稱...",
+            action: #selector(handleSetTargetWiFi),
+            keyEquivalent: ""
+        )
+        wifiSetSSIDMenuItem.target = self
+        geofenceSubMenu.addItem(wifiSetSSIDMenuItem)
+
+        wifiClearMenuItem = NSMenuItem(
+            title: "❌ 清除指定 Wi-Fi 設定",
+            action: #selector(handleClearTargetWiFi),
+            keyEquivalent: ""
+        )
+        wifiClearMenuItem.target = self
+        geofenceSubMenu.addItem(wifiClearMenuItem)
+
+        geofenceSubMenu.addItem(NSMenuItem.separator())
+
+        // --- 2. GPS 居家大範圍地理圍欄區塊 ---
         geofenceToggleMenuItem = NSMenuItem(
-            title: "啟用大範圍感應 (離家徹底停機)",
+            title: "📍 啟用 GPS 居家大範圍圍欄 (離家徹底停機)",
             action: #selector(handleToggleGeofence),
             keyEquivalent: ""
         )
         geofenceToggleMenuItem.target = self
-        geofenceToggleMenuItem.state = LocationGatekeeper.shared.isEnabled ? .on : .off
         geofenceSubMenu.addItem(geofenceToggleMenuItem)
-
-        geofenceSubMenu.addItem(NSMenuItem.separator())
 
         let recordItem = NSMenuItem(
             title: "📌 記錄目前位置為居家中心",
@@ -611,12 +643,6 @@ final class StatusBarController: NSObject {
         radiusParent.submenu = radiusSubMenu
         geofenceSubMenu.addItem(radiusParent)
 
-        geofenceSubMenu.addItem(NSMenuItem.separator())
-
-        geofenceStatusMenuItem = NSMenuItem(title: "狀態: 尚未設定居家位置", action: nil, keyEquivalent: "")
-        geofenceStatusMenuItem.isEnabled = false
-        geofenceSubMenu.addItem(geofenceStatusMenuItem)
-
         let clearItem = NSMenuItem(
             title: "❌ 清除居家位置設定",
             action: #selector(handleClearHomeLocation),
@@ -625,10 +651,71 @@ final class StatusBarController: NSObject {
         clearItem.target = self
         geofenceSubMenu.addItem(clearItem)
 
-        let geofenceParent = NSMenuItem(title: "📍 居家大範圍感應 (離家自動關閉)", action: nil, keyEquivalent: "")
+        geofenceSubMenu.addItem(NSMenuItem.separator())
+
+        // --- 3. 狀態提示項目 ---
+        geofenceStatusMenuItem = NSMenuItem(title: "狀態: 正常運作", action: nil, keyEquivalent: "")
+        geofenceStatusMenuItem.isEnabled = false
+        geofenceSubMenu.addItem(geofenceStatusMenuItem)
+
+        let geofenceParent = NSMenuItem(title: "📍 居家與網路自動感應 (離家離網停機)", action: nil, keyEquivalent: "")
         geofenceParent.submenu = geofenceSubMenu
         parentMenu.addItem(geofenceParent)
 
+        updateGeofenceMenuState()
+    }
+
+    @objc private func handleToggleWiFiOnly() {
+        if LocationGatekeeper.shared.targetWiFiSSID == nil {
+            handleSetTargetWiFi()
+            return
+        }
+        LocationGatekeeper.shared.isWiFiOnlyEnabled.toggle()
+        updateGeofenceMenuState()
+    }
+
+    @objc private func handleSetTargetWiFi() {
+        let alert = NSAlert()
+        alert.messageText = "設定指定 Wi-Fi (SSID)"
+        alert.informativeText = "請輸入您家中的 Wi-Fi 名稱 (SSID)。\n當電腦連上此 Wi-Fi 時才會喚醒藍牙掃描；離開此 Wi-Fi 或斷網時將徹底休眠停機，達成 0 耗電。"
+        alert.addButton(withTitle: "儲存並啟用")
+        alert.addButton(withTitle: "取消")
+
+        let containerView = NSView(frame: NSRect(x: 0, y: 0, width: 280, height: 60))
+        let input = NSTextField(frame: NSRect(x: 0, y: 32, width: 280, height: 24))
+        var defaultSSID = LocationGatekeeper.shared.targetWiFiSSID ?? ""
+        if defaultSSID.isEmpty, let currentSSID = CWWiFiClient.shared().interface()?.ssid(), !currentSSID.isEmpty {
+            defaultSSID = currentSSID
+        }
+        input.stringValue = defaultSSID
+        input.placeholderString = "例如: Home_5G"
+        containerView.addSubview(input)
+
+        let checkbox = NSButton(checkboxWithTitle: "鎖定當前路由器硬體 (免定位權限雙重保險)", target: nil, action: nil)
+        checkbox.frame = NSRect(x: 0, y: 4, width: 280, height: 22)
+        checkbox.state = .on
+        containerView.addSubview(checkbox)
+
+        alert.accessoryView = containerView
+
+        NSApp.activate(ignoringOtherApps: true)
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            let ssid = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !ssid.isEmpty {
+                let bindGateway = (checkbox.state == .on)
+                LocationGatekeeper.shared.setTargetWiFi(ssid: ssid, bindCurrentGateway: bindGateway)
+                updateGeofenceMenuState()
+                let okAlert = NSAlert()
+                okAlert.messageText = "Wi-Fi 綁定成功"
+                okAlert.informativeText = "已綁定 Wi-Fi: \(ssid)\n現在僅在連上該 Wi-Fi 時才會與溫濕度計連線；其餘網路或斷網時將徹底休眠。"
+                okAlert.runModal()
+            }
+        }
+    }
+
+    @objc private func handleClearTargetWiFi() {
+        LocationGatekeeper.shared.clearWiFiSettings()
         updateGeofenceMenuState()
     }
 
@@ -678,21 +765,42 @@ final class StatusBarController: NSObject {
     }
 
     func updateGeofenceMenuState() {
+        // Wi-Fi 狀態項目更新
+        wifiToggleMenuItem?.state = LocationGatekeeper.shared.isWiFiOnlyEnabled ? .on : .off
+        if let ssid = LocationGatekeeper.shared.targetWiFiSSID {
+            wifiSetSSIDMenuItem?.title = "⚙️ 設定指定 Wi-Fi (目前: \(ssid))"
+            wifiClearMenuItem?.isEnabled = true
+        } else {
+            wifiSetSSIDMenuItem?.title = "⚙️ 設定指定 Wi-Fi 名稱..."
+            wifiClearMenuItem?.isEnabled = false
+        }
+
+        // GPS 地理圍欄狀態
         geofenceToggleMenuItem?.state = LocationGatekeeper.shared.isEnabled ? .on : .off
 
-        if !LocationGatekeeper.shared.hasHomeLocation {
-            geofenceStatusMenuItem?.title = "狀態: 尚未設定居家位置"
-        } else if !LocationGatekeeper.shared.isEnabled {
-            geofenceStatusMenuItem?.title = "狀態: 大範圍感應已暫停"
-        } else {
-            let isHome = LocationGatekeeper.shared.isInHomeArea
-            if let dist = LocationGatekeeper.shared.lastKnownDistance {
-                geofenceStatusMenuItem?.title = isHome ?
-                    String(format: "狀態: 🏠 範圍內 (距家 %.0fm)", dist) :
-                    String(format: "狀態: 🚗 範圍外 (距家 %.0fm · 停機)", dist)
+        // 綜合狀態文字提示
+        if LocationGatekeeper.shared.isWiFiOnlyEnabled {
+            let target = LocationGatekeeper.shared.targetWiFiSSID ?? "未指定"
+            if LocationGatekeeper.shared.isInHomeArea {
+                geofenceStatusMenuItem?.title = "狀態: 📶 已連上 [\(target)] (正常運作)"
             } else {
-                geofenceStatusMenuItem?.title = isHome ? "狀態: 🏠 在家範圍內 (運行中)" : "狀態: 🚗 範圍外 (藍牙停機中)"
+                geofenceStatusMenuItem?.title = "狀態: 🚗 未在 [\(target)] (已休眠停機)"
             }
+        } else if LocationGatekeeper.shared.isEnabled {
+            if !LocationGatekeeper.shared.hasHomeLocation {
+                geofenceStatusMenuItem?.title = "狀態: 尚未設定居家位置"
+            } else {
+                let isHome = LocationGatekeeper.shared.isInHomeArea
+                if let dist = LocationGatekeeper.shared.lastKnownDistance {
+                    geofenceStatusMenuItem?.title = isHome ?
+                        String(format: "狀態: 🏠 範圍內 (距家 %.0fm)", dist) :
+                        String(format: "狀態: 🚗 範圍外 (距家 %.0fm · 停機)", dist)
+                } else {
+                    geofenceStatusMenuItem?.title = isHome ? "狀態: 🏠 在家範圍內 (運行中)" : "狀態: 🚗 範圍外 (藍牙停機中)"
+                }
+            }
+        } else {
+            geofenceStatusMenuItem?.title = "狀態: 未啟用自動感應 (持續運作)"
         }
     }
 
