@@ -28,6 +28,7 @@ final class BluetoothManager: NSObject {
     private var connectTimeoutTimer: Timer?
     private var isSleepingBetweenPolls: Bool = false
     private var nextUpdateTime: Date?
+    private var consecutiveFailures: Int = 0
 
     // 使用者自訂連線更新間隔 (秒)，預設 300 秒 (5 分鐘)
     private(set) var refreshInterval: TimeInterval = 300.0
@@ -67,11 +68,33 @@ final class BluetoothManager: NSObject {
 
     private func planNextPoll(isRetry: Bool = false) {
         refreshTimer?.invalidate()
-        let interval = isRetry ? min(refreshInterval, 60.0) : refreshInterval
+
+        let interval: TimeInterval
+        if isRetry {
+            consecutiveFailures += 1
+            if consecutiveFailures <= 2 {
+                // 第 1~2 次失敗 (離座 1~2 分鐘)：60 秒快速重試，方便快速恢復
+                interval = min(refreshInterval, 60.0)
+            } else if consecutiveFailures <= 4 {
+                // 第 3~4 次失敗 (離座 2~10 分鐘)：退避至 300 秒 (5 分鐘)
+                interval = max(refreshInterval, 300.0)
+            } else {
+                // 第 5 次以上 (確定長時間出門/不在家)：深度休眠 900 秒 (15 分鐘)，徹底杜絕藍牙空轉耗電！
+                interval = max(refreshInterval, 900.0)
+            }
+        } else {
+            consecutiveFailures = 0
+            interval = refreshInterval
+        }
+
         nextUpdateTime = Date().addingTimeInterval(interval)
         refreshTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
             guard let self = self else { return }
-            mijiaLog(isRetry ? "超出範圍重試：嘗試重新尋找設備..." : "省電定時喚醒：準備發起下一次輪詢連線...")
+            if isRetry {
+                mijiaLog("離線指數退避探測 (連續失敗 \(self.consecutiveFailures) 次，間隔 \(Int(interval)) 秒)：嘗試尋找設備...")
+            } else {
+                mijiaLog("省電定時喚醒：準備發起下一次輪詢連線...")
+            }
             self.connectAndFetch()
         }
     }
@@ -85,11 +108,12 @@ final class BluetoothManager: NSObject {
             delegate?.didUpdateStatus("更新數據連線中...")
             isSleepingBetweenPolls = false
 
-            // 25 秒連線超時機制 (給予充足時間接收低功耗廣播封包)
+            // 連線超時保護：一般狀態給予 20 秒，長時間離線時縮短至 8 秒以節省電力
+            let timeoutSec: TimeInterval = (consecutiveFailures >= 3) ? 8.0 : 20.0
             connectTimeoutTimer?.invalidate()
-            connectTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 25.0, repeats: false) { [weak self] _ in
+            connectTimeoutTimer = Timer.scheduledTimer(withTimeInterval: timeoutSec, repeats: false) { [weak self] _ in
                 guard let self = self else { return }
-                mijiaLog("連線超時 (可能設備暫時超出範圍)，取消並排定快速重試...")
+                mijiaLog("連線超時 (設備未在連線範圍內)，取消並排定指數退避重試...")
                 self.centralManager.cancelPeripheralConnection(p)
                 self.delegate?.didUpdateStatus("設備未在連線範圍內")
                 self.planNextPoll(isRetry: true)
@@ -148,7 +172,8 @@ final class BluetoothManager: NSObject {
     }
 
     func manualRefresh() {
-        mijiaLog("手動要求立即重新整理...")
+        mijiaLog("手動要求立即重新整理 (重置離線退避計數器)...")
+        consecutiveFailures = 0
         connectAndFetch()
     }
 
