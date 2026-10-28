@@ -570,7 +570,7 @@ extension StatusBarController: BluetoothManagerDelegate {
     func didUpdateStatus(_ status: String) {
         statusMenuItem.title = "狀態: \(status)"
 
-        if status.contains("連線中斷") || status.contains("失敗") || status.contains("關閉") {
+        if status.contains("連線中斷") || status.contains("失敗") || status.contains("關閉") || status.contains("範圍") {
             isConnected = false
             if hideWhenDisconnected {
                 statusItem.isVisible = false

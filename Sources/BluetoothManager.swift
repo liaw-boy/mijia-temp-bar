@@ -65,12 +65,13 @@ final class BluetoothManager: NSObject {
         planNextPoll()
     }
 
-    private func planNextPoll() {
+    private func planNextPoll(isRetry: Bool = false) {
         refreshTimer?.invalidate()
-        nextUpdateTime = Date().addingTimeInterval(refreshInterval)
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: refreshInterval, repeats: false) { [weak self] _ in
+        let interval = isRetry ? min(refreshInterval, 60.0) : refreshInterval
+        nextUpdateTime = Date().addingTimeInterval(interval)
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
             guard let self = self else { return }
-            mijiaLog("省電定時喚醒：準備發起下一次輪詢連線...")
+            mijiaLog(isRetry ? "超出範圍重試：嘗試重新尋找設備..." : "省電定時喚醒：準備發起下一次輪詢連線...")
             self.connectAndFetch()
         }
     }
@@ -88,10 +89,10 @@ final class BluetoothManager: NSObject {
             connectTimeoutTimer?.invalidate()
             connectTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 25.0, repeats: false) { [weak self] _ in
                 guard let self = self else { return }
-                mijiaLog("連線超時 (可能設備暫時超出範圍)，取消並排定下次重試...")
+                mijiaLog("連線超時 (可能設備暫時超出範圍)，取消並排定快速重試...")
                 self.centralManager.cancelPeripheralConnection(p)
                 self.delegate?.didUpdateStatus("設備未在連線範圍內")
-                self.planNextPoll()
+                self.planNextPoll(isRetry: true)
             }
 
             centralManager.connect(p, options: nil)
@@ -236,7 +237,7 @@ extension BluetoothManager: CBCentralManagerDelegate {
         connectTimeoutTimer = nil
         mijiaLog("連線失敗: \(error?.localizedDescription ?? "未知原因")")
         delegate?.didUpdateStatus("連線失敗，等待下次輪詢")
-        planNextPoll()
+        planNextPoll(isRetry: true)
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
