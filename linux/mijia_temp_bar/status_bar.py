@@ -1,4 +1,4 @@
-"""系統匣圖示 (AppIndicator)、Stats 雙行膠囊渲染與下拉選單。"""
+"""系統匣圖示 (AppIndicator)、雙行微型膠囊渲染與下拉選單。"""
 
 import time
 from datetime import datetime
@@ -27,7 +27,7 @@ from .settings import RUNTIME_DIR, settings  # noqa: E402
 
 
 class DisplayStyle(IntEnum):
-    STATS_BADGE = 0  # Stats 縮寫膠囊風格 (TMP / HUM 雙行對齊)
+    STATS_BADGE = 0  # 雙行微型膠囊風格 (TMP / HUM 雙行對齊)
     STACKED = 1      # 純數字雙行堆疊 (26.1° / 63%)
     HORIZONTAL = 2   # 橫向完整 (🌡️ 26.1°C  💧 65%)
     TEMP_ONLY = 3    # 僅溫度 (🌡️ 26.1°C)
@@ -35,7 +35,7 @@ class DisplayStyle(IntEnum):
 
 
 STYLE_TITLES: List[Tuple[DisplayStyle, str]] = [
-    (DisplayStyle.STATS_BADGE, "Stats 膠囊縮寫樣式 ([TMP] / [HUM])"),
+    (DisplayStyle.STATS_BADGE, "雙行微型膠囊樣式 ([TMP] / [HUM])"),
     (DisplayStyle.STACKED, "純數字雙行堆疊 (26.1° / 63%)"),
     (DisplayStyle.HORIZONTAL, "橫向完整 (🌡️ 26°C  💧 65%)"),
     (DisplayStyle.TEMP_ONLY, "僅溫度 (🌡️ 26°C)"),

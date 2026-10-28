@@ -1,7 +1,7 @@
 import AppKit
 
 enum DisplayStyle: Int {
-    case statsBadge = 0 // Stats 縮寫膠囊風格 (TMP / HUM 雙行對齊)
+    case statsBadge = 0 // 雙行微型膠囊風格 (TMP / HUM 雙行對齊)
     case stacked = 1    // 純數字雙行堆疊 (26.1° / 63%)
     case horizontal = 2 // 橫向完整 (🌡️ 26.1°C  💧 65%)
     case tempOnly = 3   // 僅溫度 (🌡️ 26.1°C)
@@ -206,7 +206,7 @@ final class StatusBarController: NSObject {
 
         // 樣式切換子選單
         let styleSubMenu = NSMenu()
-        let styleItemStats = NSMenuItem(title: "Stats 膠囊縮寫樣式 ([TMP] / [HUM])", action: #selector(setDisplayStatsBadge), keyEquivalent: "")
+        let styleItemStats = NSMenuItem(title: "雙行微型膠囊樣式 ([TMP] / [HUM])", action: #selector(setDisplayStatsBadge), keyEquivalent: "")
         styleItemStats.target = self
         styleItemStats.state = (displayStyle == .statsBadge) ? .on : .off
         styleSubMenu.addItem(styleItemStats)
@@ -286,7 +286,7 @@ final class StatusBarController: NSObject {
         )
     }
 
-    /// 產生如同 Stats / iStat Menus 風格的 [TMP] / [HUM] 雙行縮寫膠囊影像 (上下完全貼滿 24pt 版)
+    /// 產生 [TMP] / [HUM] 雙行微型膠囊影像 (上下完全貼滿 24pt 版)
     private func makeStatsBadgeImage(temp: Double, hum: Double) -> NSImage {
         let topLabel = "TMP"
         let bottomLabel = "HUM"

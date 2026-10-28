@@ -1,4 +1,4 @@
-"""狀態列影像 (Stats 雙行膠囊等樣式) 與 App 圖示的 Cairo / Pango 繪製。"""
+"""狀態列影像 (雙行微型膠囊等樣式) 與 App 圖示的 Cairo / Pango 繪製。"""
 
 import itertools
 import math
@@ -112,7 +112,7 @@ def _panel_surface(width: float) -> Tuple[cairo.ImageSurface, cairo.Context]:
 # MARK: - 狀態列樣式
 
 def render_stats_badge(temp: float, hum: float) -> cairo.ImageSurface:
-    """如同 Stats / iStat Menus 風格的 [TMP] / [HUM] 雙行縮寫膠囊 (上下貼滿 24px)。"""
+    """[TMP] / [HUM] 雙行微型膠囊樣式 (上下貼滿 24px)。"""
     top_val = f"{temp:.1f}°"
     bottom_val = f"{hum:.0f}%"
 

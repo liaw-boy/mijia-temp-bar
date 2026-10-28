@@ -15,8 +15,8 @@
 
 ## 📸 介面預覽 (Showcase)
 
-### 1. Stats 風格狀態列雙行微型膠囊 (Menu Bar / Tray)
-採用與知名 macOS 系統監控工具 **[Stats](https://github.com/exelban/stats)** 相同的上下雙行膠囊設計，頂天立地吃滿選單列空間，兼顧大字體與極致橫向省空間：
+### 1. 雙行微型膠囊狀態列 (Menu Bar / Tray)
+上下雙行微型膠囊設計（源自 [macbookBatteryMonitor](https://github.com/sgeric910601/macbookBatteryMonitor)），頂天立地吃滿選單列空間，兼顧大字體與極致橫向省空間：
 
 ```text
 ┌─────────────────────────┐
@@ -27,7 +27,7 @@
 ```
 
 同時提供 **5 種顯示樣式** 自由切換：
-- **樣式 1：Stats 雙行微型膠囊**（預設，最具辨識度）
+- **樣式 1：雙行微型膠囊**（預設，最具辨識度）
 - **樣式 2：純數字雙行堆疊**（極簡俐落）
 - **樣式 3：橫向完整排列**（`24.5°C  68%`）
 - **樣式 4：僅顯示溫度**（`24.5°`）
@@ -184,7 +184,7 @@ cd mijia-temp-bar/linux
 mijia-temp-bar/
 ├── Sources/                          # macOS 原生 Swift 原始碼
 │   ├── main.swift                    # AppKit 生命週期與常駐模式進入點
-│   ├── StatusBarController.swift     # 狀態列介面、Stats 雙行膠囊渲染、下拉選單
+│   ├── StatusBarController.swift     # 狀態列介面、雙行微型膠囊渲染、下拉選單
 │   ├── BluetoothManager.swift        # CoreBluetooth 藍牙搜尋、即連即斷省電讀取、廣播解析
 │   ├── DashboardWindowController.swift # 即時儀表板視窗、硬體渲染卡片、舒適度評估
 │   ├── ChartView.swift               # CoreGraphics 雙 Y 軸、三線走勢圖、時間比例 X 軸、HUD 氣泡
