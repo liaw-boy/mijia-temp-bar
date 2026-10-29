@@ -248,12 +248,12 @@ final class LocationGatekeeper: NSObject, CLLocationManagerDelegate {
             if let mac = gateway.mac {
                 self.homeGatewayMAC = mac
                 UserDefaults.standard.set(gateway.ip, forKey: homeGatewayIPKey)
-                mijiaLog("[WiFi] 設定目標 Wi-Fi: \(ssid)，同步記錄閘道 MAC: \(mac)")
+                mijiaLog("[WiFi] 已設定目標 Wi-Fi，並同步記錄閘道")
             } else {
-                mijiaLog("[WiFi] 設定目標 Wi-Fi: \(ssid)")
+                mijiaLog("[WiFi] 已設定目標 Wi-Fi")
             }
         } else {
-            mijiaLog("[WiFi] 設定目標 Wi-Fi: \(ssid) (未綁定當前閘道 MAC)")
+            mijiaLog("[WiFi] 已設定目標 Wi-Fi (未綁定當前閘道)")
         }
         self.isWiFiOnlyEnabled = true
         checkCurrentStatus()

@@ -18,7 +18,20 @@ def xdg_dir(env: str, fallback: str) -> Path:
 CONFIG_DIR = xdg_dir("XDG_CONFIG_HOME", ".config") / APP_DIR_NAME
 DATA_DIR = xdg_dir("XDG_DATA_HOME", ".local/share") / APP_DIR_NAME
 STATE_DIR = xdg_dir("XDG_STATE_HOME", ".local/state") / APP_DIR_NAME
-RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()) / APP_DIR_NAME
+def _runtime_dir() -> Path:
+    base = os.environ.get("XDG_RUNTIME_DIR")
+    if base:
+        return Path(base) / APP_DIR_NAME
+    # 沒有 XDG_RUNTIME_DIR 時退回暫存目錄，加上 uid 並在使用處以 0700 建立，避免共用 /tmp 被他人讀寫
+    return Path(tempfile.gettempdir()) / f"{APP_DIR_NAME}-{os.getuid()}"
+
+
+RUNTIME_DIR = _runtime_dir()
+try:
+    RUNTIME_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(RUNTIME_DIR, 0o700)
+except OSError:
+    pass
 
 
 def atomic_write_text(path: Path, text: str) -> None:
