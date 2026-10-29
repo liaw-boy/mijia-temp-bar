@@ -61,8 +61,6 @@ echo "==> 複製程式檔案到 $LIB_DIR..."
 rm -rf "$LIB_DIR/mijia_temp_bar"
 cp -r mijia_temp_bar "$LIB_DIR/"
 find "$LIB_DIR/mijia_temp_bar" -name "__pycache__" -type d -prune -exec rm -rf {} +
-mkdir -p "$LIB_DIR/Resources"
-cp "$REPO_ROOT/Resources/device.png" "$LIB_DIR/Resources/"
 
 echo "==> 建立啟動指令 $BIN_DIR/$APP..."
 mkdir -p "$BIN_DIR"

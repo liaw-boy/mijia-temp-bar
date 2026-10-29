@@ -14,7 +14,7 @@ gi.require_version("GdkPixbuf", "2.0")
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gdk, GdkPixbuf, GLib, Gtk, Pango  # noqa: E402
 
-from . import autostart, notifications  # noqa: E402
+from . import autostart, notifications, update_check  # noqa: E402
 from .chart import ChartDataType, ChartView  # noqa: E402
 from .device_view import create_device_view  # noqa: E402
 from .history import HistoryManager  # noqa: E402
@@ -392,6 +392,16 @@ class DashboardWindow(Gtk.Window):
         self.humidity_low_spin = self._percent_spin()
         self._add_row(card, "濕度下限 (%)", "低於此值時通知。", [self.humidity_low_spin])
 
+        # 版本更新
+        card = self._section(page, "版本更新")
+        self.update_button = Gtk.Button(label="檢查更新")
+        self.update_button.connect("clicked", self._handle_update_clicked)
+        self._add_row(card, f"目前版本 {__version__}", "查詢 GitHub 上是否有新版本。", [self.update_button])
+        self.update_caption = self._last_caption
+        self.update_switch = self._switch(self._handle_auto_update_toggled)
+        self._add_row(card, "自動檢查更新", "啟動時每天檢查一次，有新版本會標示在「設定」。", [self.update_switch])
+        self._update_url: Optional[str] = None
+
         about = _label(f"MijiaTempBar for Linux v{__version__}  ·  米家藍牙溫濕度計 2 (LYWSD03MMC)", "about")
         about.set_margin_start(ROW_INSET)
         about.set_margin_top(4)
@@ -430,6 +440,7 @@ class DashboardWindow(Gtk.Window):
             caption_label.set_ellipsize(Pango.EllipsizeMode.END)
             caption_label.set_tooltip_text(caption)
             texts.pack_start(caption_label, False, False, 0)
+            self._last_caption = caption_label
         row.pack_start(texts, True, True, 0)
 
         for control in reversed(controls):
@@ -465,6 +476,7 @@ class DashboardWindow(Gtk.Window):
             self.hide_switch.set_active(self.controller.hide_when_disconnected)
             self.autostart_switch.set_active(autostart.is_enabled())
             self.low_battery_switch.set_active(notifications.is_enabled())
+            self.update_switch.set_active(update_check.auto_check_enabled())
 
             enabled = notifications.humidity_enabled()
             high, low = notifications.humidity_thresholds()
@@ -532,3 +544,36 @@ class DashboardWindow(Gtk.Window):
             mijia_log(f"濕度上下限無效 (上限 {high}%、下限 {low}%)，維持原設定")
         notifications.reset_humidity_monitor()
         self.reload_settings()
+
+    # MARK: - 版本更新
+
+    def _handle_auto_update_toggled(self, switch: Gtk.Switch, _pspec) -> None:
+        if not self._loading:
+            update_check.set_auto_check(switch.get_active())
+
+    def _handle_update_clicked(self, _button) -> None:
+        if self._update_url is not None:
+            Gtk.show_uri_on_window(self, self._update_url, Gdk.CURRENT_TIME)
+            return
+        self.update_caption.set_text("檢查中...")
+        self.update_button.set_sensitive(False)
+        update_check.check_async(self.show_update_result, _idle)
+
+    def show_update_result(self, result) -> None:
+        self.update_button.set_sensitive(True)
+        self.update_caption.set_text(result.message)
+        if result.kind == "available" and result.url:
+            self._update_url = result.url
+            self.update_button.set_label("前往下載")
+        else:
+            self._update_url = None
+            self.update_button.set_label("檢查更新")
+        self.stack.child_set_property(self.stack.get_child_by_name("settings"), "title",
+                                      "設定 ●" if result.kind == "available" else "設定")
+
+
+def _idle(fn, *args) -> None:
+    def run():
+        fn(*args)
+        return GLib.SOURCE_REMOVE
+    GLib.idle_add(run)

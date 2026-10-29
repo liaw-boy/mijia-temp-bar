@@ -58,10 +58,11 @@ class Settings:
         with self._lock:
             self._data[key] = value
             text = json.dumps(self._data, ensure_ascii=False, indent=2)
-        try:
-            atomic_write_text(self._path, text)
-        except OSError:
-            pass
+            # 寫檔也放在鎖內，避免兩個執行緒的寫入順序對調而蓋掉較新的設定
+            try:
+                atomic_write_text(self._path, text)
+            except OSError:
+                pass
 
 
 settings = Settings()

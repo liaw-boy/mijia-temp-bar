@@ -16,7 +16,7 @@ except (ValueError, ImportError):
     gi.require_version("AppIndicator3", "0.1")
     from gi.repository import AppIndicator3 as AppIndicator  # noqa: E402
 
-from . import notifications  # noqa: E402
+from . import notifications, update_check  # noqa: E402
 from .bluetooth import BluetoothManager  # noqa: E402
 from .history import HistoryManager  # noqa: E402
 from .icons import TrayIconWriter, render_stacked, render_stats_badge, render_text  # noqa: E402
@@ -41,6 +41,7 @@ class StatusBarController:
         self.dashboard = None
         self._temp_show_source: Optional[int] = None
         self.status_text = "正在搜尋藍牙設備..."
+        self.update_result = None
 
         # 讀取偏好設定
         hide = settings.get("HideWhenDisconnected")
@@ -86,6 +87,19 @@ class StatusBarController:
             self._temp_show_source = GLib.timeout_add_seconds(45, self._hide_if_still_disconnected)
 
         self.bluetooth_manager.start()
+
+        # 啟動後稍等再檢查新版本 (每天最多一次)
+        GLib.timeout_add_seconds(8, self._auto_check_update)
+
+    def _auto_check_update(self) -> bool:
+        if update_check.due_for_auto_check(time.time()):
+            update_check.check_async(self._on_update_result, dispatch_to_main)
+        return GLib.SOURCE_REMOVE
+
+    def _on_update_result(self, result) -> None:
+        self.update_result = result
+        if self.dashboard is not None:
+            self.dashboard.show_update_result(result)
 
     def shutdown(self) -> None:
         mijia_log("MijiaTempBar 正在退出...")
@@ -201,6 +215,8 @@ class StatusBarController:
         else:
             self.dashboard.reload_data()
         self.dashboard.update_status(self.status_text)
+        if self.update_result is not None:
+            self.dashboard.show_update_result(self.update_result)
         self.dashboard.show_near_pointer()
 
     def refresh_now(self) -> None:

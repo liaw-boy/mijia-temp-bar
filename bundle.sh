@@ -27,9 +27,6 @@ mkdir -p "$APP/Contents/Resources"
 
 cp MijiaTempBar "$APP/Contents/MacOS/"
 cp AppIcon.icns "$APP/Contents/Resources/"
-if [ -f "Resources/device.png" ]; then
-    cp Resources/device.png "$APP/Contents/Resources/"
-fi
 
 cat > "$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>

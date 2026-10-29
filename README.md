@@ -210,9 +210,7 @@ mijia-temp-bar/
 │   ├── HistoryManager.swift          # 歷史資料持久化、JSON 儲存、CSV 匯出
 │   ├── NotificationManager.swift     # 低電量預警診斷、macOS 系統橫幅推播、24h 防干擾冷卻
 │   ├── LocationGatekeeper.swift      # 居家大範圍地理圍欄、網路閘道錨點、離家停機與進門喚醒
-│   └── Logger.swift                  # 輕量本機除錯日誌 (/tmp/mijia_temp_bar.log)
-├── Resources/
-│   └── device.png                    # 小米官方 LYWSD03MMC 硬體高解析透明圖
+│   └── Logger.swift                  # 輕量本機除錯日誌 (~/Library/Logs/MijiaTempBar)
 ├── generate_icon.swift               # Google Stitch Vibe Design 原生圖示生成腳本
 ├── bundle.sh                         # 一鍵編譯、資源打包與 Ad-hoc 本機簽名腳本
 ├── linux/                            # Linux 移植版本 (Python + GTK + AppIndicator + BlueZ)
