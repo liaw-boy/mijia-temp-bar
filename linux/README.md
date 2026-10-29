@@ -19,10 +19,11 @@ MijiaTempBar 的 Linux 移植版本：在桌面系統匣（GNOME 頂部面板 / 
 - **開源韌體廣播**：自動解析 ATC1441 / pvvx / BTHome v2（未加密）廣播。
 - **連線間隔**：30 秒 ~ 2 小時預設值，或自訂任意分鐘數。
 - **僅連線時顯示**：超出藍牙範圍時自動隱藏圖示，回到範圍內自動重連並重新出現。
-- **即時儀表板**：三大指標卡片、雙 Y 軸綜合總覽 / 溫度 / 濕度 / 電壓回彈折線圖、滑鼠懸停數值提示、一鍵匯出 CSV。
+- **即時儀表板**（從選單開啟的彈出視窗，點視窗外或按 Esc 收起）：三大指標卡片、隨數據變化的裝置示意圖、總覽（溫度／濕度／電量）／溫度／濕度／電壓折線圖、6 小時／24 小時／7 天／全部時間範圍、滑鼠懸停數值提示、一鍵匯出 CSV。
+- **設定分頁**：更新間隔（含自訂分鐘）、圖示樣式、僅連線時顯示、開機自動啟動、低電量通知、濕度警示（上限／下限）。
 - **離線指數退避**：設備連續連不上時，重試間隔依 60 秒 → 5 分鐘 → 15 分鐘拉長，避免藍牙空轉。
-- **低電量通知**：電量 ≤ 15% 或電壓 ≤ 2.60V 時發出桌面通知，24 小時內不重複，可在選單關閉。
-- **開機自動啟動**：直接在系統匣選單勾選（Linux 版新增）。
+- **低電量通知**：電量 ≤ 15% 或電壓 ≤ 2.60V 時發出桌面通知，24 小時內不重複，可在設定分頁關閉。
+- **開機自動啟動**：在儀表板的設定分頁開關（Linux 版新增）。
 
 ---
 
@@ -60,7 +61,7 @@ cd mijia-temp-bar/linux
 ```
 
 安裝完成後從應用程式選單開啟「**米家溫濕度狀態列**」，或在終端機執行 `mijia-temp-bar`。
-需要開機自動啟動時，在系統匣選單勾選「**開機時自動啟動**」即可。
+需要開機自動啟動時，在儀表板的「設定」分頁打開「**開機自動啟動**」即可。
 
 ### 移除
 
@@ -85,7 +86,7 @@ python3 -m unittest
 
 ## 🖱️ 操作方式
 
-- **左鍵** 點擊圖示：開啟選單（溫濕度、電量、連線間隔、樣式切換等）。
+- **左鍵** 點擊圖示：開啟精簡選單（開啟儀表板、結束）；間隔、樣式、通知等都在儀表板的「設定」分頁。
 - **中鍵** 點擊圖示：直接開啟即時儀表板。
 - 圖示因「僅連線時顯示」而隱藏時，從應用程式選單再次啟動即可暫時喚回圖示並開啟儀表板。
 
@@ -117,11 +118,11 @@ python3 -m unittest
 linux/
 ├── mijia_temp_bar/
 │   ├── __main__.py / app.py  # GTK 應用程式生命週期與單一實例常駐   (main.swift)
-│   ├── status_bar.py         # AppIndicator 系統匣圖示與下拉選單    (StatusBarController.swift)
+│   ├── status_bar.py         # AppIndicator 系統匣圖示與精簡選單    (StatusBarController.swift)
 │   ├── bluetooth.py          # BlueZ (bleak) 搜尋、GATT 即連即斷    (BluetoothManager.swift)
 │   ├── parsers.py            # 原廠 GATT / ATC / pvvx / BTHome 解析
 │   ├── history.py            # 歷史數據保存與 CSV 匯出             (HistoryManager.swift)
-│   ├── dashboard.py          # 即時儀表板視窗                       (DashboardWindowController.swift)
+│   ├── dashboard.py          # 彈出式儀表板與設定分頁                    (DashboardWindowController.swift)
 │   ├── chart.py              # Cairo 歷史趨勢折線圖                 (ChartView.swift)
 │   ├── icons.py              # 狀態列膠囊影像與 App 圖示            (generate_icon.swift)
 │   ├── settings.py           # 偏好設定與 XDG 路徑                  (UserDefaults)

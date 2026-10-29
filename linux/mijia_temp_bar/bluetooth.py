@@ -6,6 +6,7 @@ bleak 為 asyncio 架構，這裡讓它在獨立的背景執行緒事件迴圈�
 
 import asyncio
 import json
+import math
 import threading
 import time
 from datetime import datetime, timedelta
@@ -57,7 +58,7 @@ class BluetoothManager:
 
         # 使用者自訂連線更新間隔 (秒)，預設 300 秒 (5 分鐘)
         saved = settings.get("RefreshIntervalSeconds")
-        if isinstance(saved, (int, float)) and saved >= 10.0:
+        if isinstance(saved, (int, float)) and not isinstance(saved, bool) and math.isfinite(saved) and 10.0 <= saved <= 86400.0:
             self.refresh_interval = float(saved)
         else:
             self.refresh_interval = 300.0
