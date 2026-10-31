@@ -1,6 +1,6 @@
-# MijiaTempBar for Linux 🐧🌡️💧
+# MijiaTempBar for Linux
 
-[![Platform](https://img.shields.io/badge/platform-Linux-lightgrey?logo=linux)](#-系統需求-requirements)
+[![Platform](https://img.shields.io/badge/platform-Linux-lightgrey?logo=linux)](#系統需求-requirements)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)](https://www.python.org/)
 
 MijiaTempBar 的 Linux 移植版本：在桌面系統匣（GNOME 頂部面板 / KDE 系統匣）即時顯示 **小米 / 米家藍牙溫濕度計 2（LYWSD03MMC）** 的溫濕度，核心功能與 macOS 版相同（不含 Wi-Fi／GPS 居家感應停機，桌面環境通常不需要）。
@@ -8,11 +8,12 @@ MijiaTempBar 的 Linux 移植版本：在桌面系統匣（GNOME 頂部面板 / 
 <p>
   <img src="screenshots/tray-styles.png" alt="系統匣五種顯示樣式" height="300">
   <img src="screenshots/dashboard.png" alt="即時儀表板與歷史趨勢折線圖" height="300">
+  <img src="screenshots/settings.png" alt="儀表板設定分頁" height="300">
 </p>
 
 ---
 
-## 🌟 功能 (Features)
+## 功能 (Features)
 
 - **與 macOS 版相同的 5 種狀態列樣式**：雙行微型膠囊 `[TMP] / [HUM]`、純數字雙行堆疊、橫向完整、僅溫度、緊湊單行。
 - **原廠韌體「即連即斷」省電讀取**：透過 BlueZ GATT 讀取一次數據後立即斷線，讓硬體回到 Deep Sleep。
@@ -28,7 +29,7 @@ MijiaTempBar 的 Linux 移植版本：在桌面系統匣（GNOME 頂部面板 / 
 
 ---
 
-## 💻 系統需求 (Requirements)
+## 系統需求 (Requirements)
 
 - Python 3.10 以上、BlueZ 5（`bluetooth` 服務）、GTK 3、Ayatana AppIndicator
 - 支援 StatusNotifierItem 系統匣的桌面環境
@@ -38,7 +39,7 @@ MijiaTempBar 的 Linux 移植版本：在桌面系統匣（GNOME 頂部面板 / 
 
 ---
 
-## 📥 安裝 (Installation)
+## 安裝 (Installation)
 
 ### 1. 安裝系統套件
 
@@ -85,7 +86,7 @@ python3 -m unittest
 
 ---
 
-## 🖱️ 操作方式
+## 操作方式
 
 - **左鍵** 點擊圖示：開啟精簡選單（開啟儀表板、結束）；間隔、樣式、通知等都在儀表板的「設定」分頁。
 - **中鍵** 點擊圖示：直接開啟即時儀表板。
@@ -93,7 +94,7 @@ python3 -m unittest
 
 ---
 
-## 📁 檔案位置
+## 檔案位置
 
 | 用途 | macOS 版 | Linux 版 |
 | --- | --- | --- |
@@ -104,7 +105,7 @@ python3 -m unittest
 
 ---
 
-## ❓ 常見問題 (Troubleshooting)
+## 常見問題 (Troubleshooting)
 
 - **系統匣看不到圖示**：GNOME 請確認 AppIndicator 擴充套件已啟用（`gnome-extensions list --enabled`）。
 - **一直顯示「搜尋溫濕度計中」**：確認電腦藍牙已開啟（`bluetoothctl show`）、溫濕度計在附近，且沒有被手機米家 App 等其他裝置連線佔用。
@@ -113,7 +114,7 @@ python3 -m unittest
 
 ---
 
-## 🛠️ 專案結構 (與 macOS 版對照)
+## 專案結構 (與 macOS 版對照)
 
 ```text
 linux/

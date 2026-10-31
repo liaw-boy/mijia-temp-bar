@@ -1,4 +1,4 @@
-# MijiaTempBar 🌡️💧🔋
+# MijiaTempBar
 
 [![Release](https://img.shields.io/github/v/release/liaw-boy/mijia-temp-bar?color=blue&logo=github)](https://github.com/liaw-boy/mijia-temp-bar/releases)
 [![Platform](https://img.shields.io/badge/platform-macOS%2012.0%2B-lightgrey?logo=apple)](https://www.apple.com/macos/)
@@ -13,7 +13,7 @@
 
 ---
 
-## 📸 介面預覽 (Showcase)
+## 介面預覽 (Showcase)
 
 ### 1. 雙行微型膠囊狀態列 (Menu Bar / Tray)
 上下雙行微型膠囊設計（源自 [macbookBatteryMonitor](https://github.com/sgeric910601/macbookBatteryMonitor)），頂天立地吃滿選單列空間，兼顧大字體與極致橫向省空間：
@@ -35,40 +35,47 @@
 
 ### 2. 原生即時儀表板與歷史趨勢折線圖 (GUI Dashboard)
 直接點選狀態列圖示，就會彈出完整儀表板面板（右鍵為「設定／結束」精簡選單）：
+
+<p><img src="screenshots/macos-dashboard.png" alt="點狀態列彈出的即時儀表板" width="600"></p>
+
 - **裝置示意圖**：標頭顯示 LYWSD03MMC 外觀示意圖（程式繪製，非官方產品照）與連線狀態指示燈。
 - **三大指標數據卡片**：
-  - 🌡️ **即時溫度**（附今日最低 / 最高溫統計）
-  - 💧 **相對濕度**（附人體舒適度評估：適宜 / 偏高 / 乾燥）
-  - 🔋 **電池電量**（附毫伏級精確即時電壓監控）
+  - **即時溫度**（附今日最低 / 最高溫統計）
+  - **相對濕度**（附人體舒適度評估：舒適 / 偏濕 / 偏乾）
+  - **電池電量**（附毫伏級精確即時電壓監控）
 - **互動式向量折線圖**：
-  - **📊 綜合總覽**：同屏繪製 **溫度 (°C)** 與 **濕度 (%)** 兩條曲線，雙 Y 軸；電量另有獨立的「電壓」分頁。可切換 6 小時／24 小時／7 天／全部的時間範圍（預設 24 小時）。
-  - **分頁專題走勢**：支援切換「🌡️ 溫度走勢 / 💧 濕度走勢 / 🔋 電壓回彈」。
+  - **綜合總覽**：同屏繪製 **溫度 (°C)**、**濕度 (%)** 與 **電量 (%)** 三條曲線，雙 Y 軸；電壓另有獨立分頁。可切換 6 小時／24 小時／7 天／全部的時間範圍（預設 24 小時）。
+  - **分頁專題走勢**：支援切換「溫度 / 濕度 / 電壓」。
   - **智慧避讓懸停氣泡 (Hover HUD)**：滑鼠移動時同步標記三色光暈點位，當數值位於圖表頂端時自動翻轉避讓，確保資訊絕不遮蔽。
   - **CSV 數據匯出**：一鍵將完整採樣歷史匯出為標準 CSV 格式。
 
 ### 3. 全新整合型原生偏好設定頁面 (Preferences & Settings)
 在面板頂部切換「設定」分頁：
-- **📶 網路與居家在席感應**：
+
+<p><img src="screenshots/macos-settings.png" alt="面板內的設定分頁" width="600"></p>
+
+- **網路與居家在席感應**：
   - 指定 Wi-Fi (SSID) 綁定開關與目標名稱設定。
   - 路由器硬體特徵 (MAC) 雙重保險開關與即時檢測資訊。
   - GPS 居家大範圍地理圍欄開關、100m ~ 1000m 半徑調節、一鍵記錄目前座標為家。
-  - **即時在席狀態指示卡片**：即時動態反饋當前在線與休眠停機狀態（例如 `📶 已連上指定 Wi-Fi [Home_5G] · 正常運作` 或 `🚗 未在指定 Wi-Fi · 已徹底休眠停機 (0 耗電)`）。
-- **⏱️ 採樣頻率與省電策略**：
+  - **即時在席狀態指示卡片**：即時動態反饋當前在線與休眠停機狀態（例如 `狀態：已連上指定 Wi-Fi [Home_5G] · 藍牙輪詢正常運作中` 或 `狀態：未連線至指定 Wi-Fi [Home_5G] · 已徹底休眠停機 (0 耗電)`）。
+- **採樣頻率與省電策略**：
   - 連線更新間隔下拉選單（30 秒 ~ 2 小時，支援任意分鐘自訂）。
   - 詳盡的秒讀休眠與指數退避策略說明。
-- **🎨 狀態列外觀與警示通知**：
+- **狀態列外觀與警示通知**：
   - 5 種狀態列樣式即時下拉切換。
   - 僅連線時顯示開關。
   - 低電量（$\le 15\%$ 或 $\le 2.60\text{V}$）macOS 原生推播通知開關。
   - 濕度警示：可自訂濕度上限／下限（預設 70% / 30%，預設關閉），超出範圍時推播通知，回到範圍內才重新武裝，持續超標每 3 小時再提醒一次。
-- **ℹ️ 設備與系統資訊**：
+- **版本更新**：手動或每天自動檢查 GitHub release，有新版只提示、不自動安裝。
+- **設備與系統資訊**：
   - 設備型號、雙模協議、版本與開源來源資訊。
 
 ---
 
-## 🌟 核心特色 (Core Highlights)
+## 核心特色 (Core Highlights)
 
-### ⚡ 獨家「即連即斷 (Connect-Read-Disconnect)」超省電架構
+### 獨家「即連即斷 (Connect-Read-Disconnect)」超省電架構
 原廠韌體預設在 BLE GATT 連線期間會開啟 Notify，每 6 秒發送一次射頻訊號，導致微型 CR2032 鈕扣電池承受劇烈負載內阻壓降 (Voltage Sag)，幾天內電壓即從 2.9V 跌破 2.85V。
 
 本專案研發「**即連即斷**」極致省電演算法：
@@ -83,60 +90,60 @@ flowchart LR
 - **連線 1 秒即斷**：完全關閉 GATT Notify，讀取一次數據後立即調用 `cancelPeripheralConnection`。
 - **電池電壓完美回彈**：感測器 99.7% 時間處於 Deep Sleep 休眠，鈕扣電池電壓顯著回升（實測從 2.854V 回彈至 2.880V+），續航延長至一年以上！
 
-### ⏱️ 彈性可調連線間隔（支援自訂分鐘）
-選單支援快速切換預設間隔或彈窗輸入任意分鐘數：
+### 彈性可調連線間隔（支援自訂分鐘）
+在「設定」分頁快速切換預設間隔，或輸入任意分鐘數：
 - `30 秒`：即時調試模式
 - `1 分鐘` / `3 分鐘`：一般動態監控
 - `5 分鐘`：**推薦平衡模式**（預設）
 - `10 分鐘` / `15 分鐘` / `30 分鐘`：深度省電模式
 - `1 小時` / `2 小時`：**超省電休眠模式**（連線 1 秒、休眠 3599 秒）
-- `自訂時間 (分鐘)...`：支援任意整數分鐘（如 45、90、120 分鐘等）。
+- `自訂分鐘`：支援任意整數分鐘（如 45、90、120 分鐘等）。
 
-### 🔔 低電量智慧預警與推播通知 (Low Battery Notification)
+### 低電量智慧預警與推播通知 (Low Battery Notification)
 CR2032 鈕扣電池在壽命末期（電壓跌破 2.60V）會進入斷崖式崩塌放電，幾天內即會完全耗盡：
 - **雙重健康門檻診斷**：當電量 $\le 15\%$ 或電壓 $\le 2.60\text{V}$ 時，自動觸發低電量預警。
 - **macOS 原生系統橫幅推播 (UserNotifications)**：即時彈出 macOS 系統通知，提醒及早備妥並更換 CR2032 電池。
 - **24 小時防干擾冷卻機制**：每日最多提醒一次，絕不產生通知轟炸。換上新電池後自動復位重置。
-- **狀態列與選單視覺化警示**：狀態列選單與儀表板卡片同步標記 `⚠️ 電量過低` 紅色醒目標籤，選單亦提供獨立開關隨時關閉或啟用提醒。
+- **狀態列與選單視覺化警示**：儀表板電池卡片標記「電量過低，請更換電池」紅色醒目標籤，「設定」分頁提供獨立開關隨時關閉或啟用提醒。
 
-### 📍 居家與網路自動感應 (Wi-Fi SSID 綁定與大範圍地理圍欄)
+### 居家與網路自動感應 (Wi-Fi SSID 綁定與大範圍地理圍欄)
 業界領先的「**多層在席感知架構 (Multi-Tier Presence Pipeline)**」，完美解決筆電攜帶外出或遠離設備時的背景輪詢耗電疑慮：
-- **📶 指定 Wi-Fi (SSID) 綁定喚醒**：可指定家中的 Wi-Fi 名稱（如 `Home_5G`），僅在連上該 Wi-Fi 時喚醒連線；一旦中斷連線或切換至公司/手機熱點等外部網路，藍牙立即進入 0 射頻、0 CPU 負載的徹底休眠停機！更具備路由器硬體 MAC 雙重保險，免定位權限亦可精準運作。
-- **📍 GPS 居家大範圍地理圍欄**：結合 macOS 原生 `CoreLocation`（100m 粗定位）與居家網路閘道建立定位錨點，半徑 100m ~ 1000m 自由設定。
+- **指定 Wi-Fi (SSID) 綁定喚醒**：可指定家中的 Wi-Fi 名稱（如 `Home_5G`），僅在連上該 Wi-Fi 時喚醒連線；一旦中斷連線或切換至公司/手機熱點等外部網路，藍牙立即進入 0 射頻、0 CPU 負載的徹底休眠停機！更具備路由器硬體 MAC 雙重保險，免定位權限亦可精準運作。
+- **GPS 居家大範圍地理圍欄**：結合 macOS 原生 `CoreLocation`（100m 粗定位）與居家網路閘道建立定位錨點，半徑 100m ~ 1000m 自由設定。
 - **出門離家徹底斷電 (Away Mode)**：一旦帶著筆電離開居家範圍或脫離指定 Wi-Fi，軟體**完全終止一切藍牙連線與背景定時器**，徹底停機。
 - **進門回家自動喚醒 (Home Mode)**：走入家門範圍或連回家中 Wi-Fi 瞬間，1 秒內自動喚醒藍牙連線，狀態列無感浮現最新數值！
-- **📈 離線指數退避 (Exponential Backoff)**：若在家中短暫將筆電移至藍牙死角，自動啟動 60 秒 $\to$ 300 秒 $\to$ 900 秒階梯退避，徹底杜絕藍牙空轉耗電！
+- **離線指數退避 (Exponential Backoff)**：若在家中短暫將筆電移至藍牙死角，自動啟動 60 秒 $\to$ 300 秒 $\to$ 900 秒階梯退避，徹底杜絕藍牙空轉耗電！
 
-### 🔌 原廠出廠與開源韌體雙模自動相容
+### 原廠出廠與開源韌體雙模自動相容
 - **原廠官方韌體**：免刷機、出廠即用，直接透過 BLE GATT 協議精準讀取。
 - **開源自製韌體**：自動嗅探並解析 ATC1441、pvvx、BTHome v2 廣播封包。
 
-### 👻 智慧隱藏與自動秒連
+### 智慧隱藏與自動秒連
 - 啟用「**僅連線時顯示**」後，帶著筆電外出或超出藍牙範圍時，選單列圖示會**自動完全隱藏**，保持桌面乾淨。
 - 回到室內藍牙範圍內，數秒內**自動無感重連並重新浮現**。
 - 啟動瞬間先讀取本機快取數據，徹底消除選單列閃爍。
 
 ---
 
-## 🖥️ 跨平台支援 (macOS & Linux)
+## 跨平台支援 (macOS & Linux)
 
 本專案提供兩個平台的原生實現：
 
 | 平台 | 技術棧 | 系統匣實作 | 介面渲染 |
 | :--- | :--- | :--- | :--- |
-| **🍎 macOS** | Swift 6 + AppKit + CoreBluetooth | `NSStatusItem` | CoreGraphics 向量圖形 |
-| **🐧 Linux** | Python 3.10+ + BlueZ + bleak | Ayatana AppIndicator (SNI) | GTK 3 + Cairo + Pango |
+| **macOS** | Swift 6 + AppKit + CoreBluetooth | `NSStatusItem` | CoreGraphics 向量圖形 |
+| **Linux** | Python 3.10+ + BlueZ + bleak | Ayatana AppIndicator (SNI) | GTK 3 + Cairo + Pango |
 
 兩者功能保持 100% 一致（5 種狀態列樣式、即時儀表板、綜合折線圖、CSV 匯出、省電輪詢）。
 
 ---
 
-## 📥 安裝與使用 (Installation)
+## 安裝與使用 (Installation)
 
-### 🍎 macOS 版本
+### macOS 版本
 
 #### 方式 1：直接下載發行版本（最推薦）
-1. 前往 **[Releases 頁面](https://github.com/liaw-boy/mijia-temp-bar/releases)** 下載最新版 `MijiaTempBar-v1.3.0.zip`。
+1. 前往 **[Releases 頁面](https://github.com/liaw-boy/mijia-temp-bar/releases)** 下載最新版 `MijiaTempBar-v1.8.0.zip`。
 2. 解壓縮後將 `MijiaTempBar.app` 拖移至 `/Applications`（應用程式）資料夾。
 3. 雙擊啟動即可！（首次啟動若系統跳出「想使用藍牙」，請點選允許）。
 
@@ -155,7 +162,7 @@ open MijiaTempBar.app
 
 ---
 
-### 🐧 Linux 版本
+### Linux 版本
 
 詳細說明請參閱 **[linux/README.md](linux/README.md)**。
 
@@ -177,11 +184,11 @@ cd mijia-temp-bar/linux
 ./install.sh
 ```
 安裝完成後可從應用程式選單啟動「**米家溫濕度狀態列**」，或在終端機輸入 `mijia-temp-bar`。
-開機自動啟動可直接在系統匣選單勾選「**開機時自動啟動**」。
+開機自動啟動可在儀表板的「設定」分頁打開「**開機自動啟動**」。
 
 ---
 
-## 🏷️ 支援硬體規格 (Supported Hardware)
+## 支援硬體規格 (Supported Hardware)
 
 | 設備型號 | 官方名稱 | 支援方式 |
 | :--- | :--- | :--- |
@@ -197,18 +204,20 @@ cd mijia-temp-bar/linux
 
 ---
 
-## 🛠️ 專案目錄結構 (Project Structure)
+## 專案目錄結構 (Project Structure)
 
 ```
 mijia-temp-bar/
 ├── Sources/                          # macOS 原生 Swift 原始碼
 │   ├── main.swift                    # AppKit 生命週期與常駐模式進入點
-│   ├── StatusBarController.swift     # 狀態列介面、雙行微型膠囊渲染、下拉選單
+│   ├── StatusBarController.swift     # 狀態列介面、雙行微型膠囊渲染、點擊彈出儀表板面板
 │   ├── BluetoothManager.swift        # CoreBluetooth 藍牙搜尋、即連即斷省電讀取、廣播解析
 │   ├── DashboardWindowController.swift # 即時儀表板視窗、硬體渲染卡片、舒適度評估
+│   ├── DeviceView.swift              # 隨數據變化的裝置示意圖 (程式繪製)
 │   ├── ChartView.swift               # CoreGraphics 雙 Y 軸、三線走勢圖、時間比例 X 軸、HUD 氣泡
 │   ├── HistoryManager.swift          # 歷史資料持久化、JSON 儲存、CSV 匯出
 │   ├── NotificationManager.swift     # 低電量預警診斷、macOS 系統橫幅推播、24h 防干擾冷卻
+│   ├── UpdateChecker.swift           # GitHub release 更新檢查 (只提示、不自動安裝)
 │   ├── LocationGatekeeper.swift      # 居家大範圍地理圍欄、網路閘道錨點、離家停機與進門喚醒
 │   └── Logger.swift                  # 輕量本機除錯日誌 (~/Library/Logs/MijiaTempBar)
 ├── generate_icon.swift               # Google Stitch Vibe Design 原生圖示生成腳本
@@ -226,6 +235,6 @@ mijia-temp-bar/
 
 ---
 
-## 📄 授權條款 (License)
+## 授權條款 (License)
 
 本專案採用 [MIT License](LICENSE) 授權開放原始碼。歡迎社群提交 Issue 與 Pull Request！
