@@ -68,12 +68,12 @@ final class BluetoothManager: NSObject {
     /// 更新裝置清單與輪詢順序 (order 第一台為主裝置)
     func setDevices(_ records: [DeviceRecord], order primaryFirst: [String]) {
         let now = Date()
-        devices = Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) })
+        devices = Dictionary(records.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         order = primaryFirst.filter { devices[$0]?.kind == .stock }
-        runtimes = Dictionary(uniqueKeysWithValues: order.map { ($0, runtimes[$0] ?? Runtime(due: now)) })
-        broadcasts = Dictionary(uniqueKeysWithValues: records.filter { $0.kind == .broadcast }.map {
+        runtimes = Dictionary(order.map { ($0, runtimes[$0] ?? Runtime(due: now)) }, uniquingKeysWith: { first, _ in first })
+        broadcasts = Dictionary(records.filter { $0.kind == .broadcast }.map {
             ($0.id, broadcasts[$0.id] ?? BroadcastState(lastSeen: now))  // 新加入的廣播裝置給緩衝時間
-        })
+        }, uniquingKeysWith: { first, _ in first })
         peripherals = peripherals.filter { devices[$0.key.uuidString] != nil || $0.key.uuidString == attempt?.id }
         if let a = attempt, devices[a.id] == nil {
             finishAttempt(a.id, token: a.token, outcome: .cancelled)
@@ -373,10 +373,12 @@ extension BluetoothManager: CBCentralManagerDelegate {
         let id = peripheral.identifier.uuidString
         let name = peripheral.name ?? (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? ""
         let raw = advertisementData[CBAdvertisementDataServiceDataKey] as? [CBUUID: Data] ?? [:]
-        let serviceData = Dictionary(uniqueKeysWithValues: raw.map { ($0.key.uuidString.uppercased(), $0.value) })
+        // 廣播內容來自附近任何裝置，不可信：重複的鍵只取第一筆 (uniqueKeysWithValues 遇到重複會讓程式崩潰)
+        let serviceData = Dictionary(raw.map { ($0.key.uuidString.uppercased(), $0.value) }, uniquingKeysWith: { first, _ in first })
 
         if discovery != nil, let c = DeviceDiscovery.candidate(id: id, name: name, rssi: RSSI.intValue, serviceData: serviceData) {
-            discovery?.found[c.id] = DeviceDiscovery.merge(discovery?.found[c.id], c)
+            let merged = DeviceDiscovery.merge(discovery?.found[c.id], c)  // 先算好再寫入 (同一行讀寫會違反獨佔存取)
+            discovery?.found[c.id] = merged
             if c.kind == .stock { peripherals[peripheral.identifier] = peripheral }
         }
         if let a = attempt, a.id == id, a.phase == .locating {
