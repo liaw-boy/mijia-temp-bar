@@ -1,4 +1,5 @@
-"""系統匣選單：每台裝置一列 (主裝置打勾)，子選單可切換主裝置、改名、移除。
+"""系統匣選單：第一層每台裝置一列，直接點就切換「狀態列顯示這台」(主裝置打勾)；
+每台的詳細資訊與立即更新、改名、移除放在「管理裝置」子選單。
 
 裝置清單變動時整份選單重建；收到讀數時只更新文字，避免選單開著時閃動。
 """
@@ -15,21 +16,19 @@ from .devices import KIND_STOCK, KIND_TITLES, Device  # noqa: E402
 
 PRIMARY_MARK = "✓ "
 OTHER_MARK = "　 "  # 全形空白，讓未打勾的名稱與打勾的對齊
+SHOWING_NOTE = "  (主裝置不在附近，狀態列顯示這台)"
 
 
 def detail_lines(device: Device, state: DeviceState) -> List[str]:
-    """子選單上方的唯讀資訊列。"""
+    """「管理裝置」子選單中每台的唯讀資訊列 (行數固定，更新時只改文字)。"""
     r = state.reading
     if r is not None:
         battery = f"電量: {r.battery_percent} % ({r.voltage:.2f}V)"
         updated = f"最後更新: {r.last_updated:%m/%d %H:%M:%S}" + (" (上次紀錄)" if state.cached else "")
     else:
         battery, updated = "電量: --", "最後更新: --"
-    lines = [battery, updated]
-    lines.append(f"狀態: {state.status}")
-    lines.append(f"連線模式: {KIND_TITLES.get(device.kind, device.kind)}")
-    lines.append(f"位址: {device.id}")
-    return lines
+    return [battery, updated, f"狀態: {state.status}",
+            f"連線模式: {KIND_TITLES.get(device.kind, device.kind)}", f"位址: {device.id}"]
 
 
 def _item(menu: Gtk.Menu, label: str, callback: Optional[Callable[[], None]] = None) -> Gtk.MenuItem:
@@ -45,17 +44,22 @@ def _item(menu: Gtk.Menu, label: str, callback: Optional[Callable[[], None]] = N
 class DeviceMenu:
     def __init__(self, controller):
         self.controller = controller
-        self._rows: Dict[str, Tuple[Gtk.MenuItem, List[Gtk.MenuItem]]] = {}
+        self._rows: Dict[str, Gtk.MenuItem] = {}
+        self._manage_rows: Dict[str, Tuple[Gtk.MenuItem, List[Gtk.MenuItem]]] = {}
 
     def build(self) -> Tuple[Gtk.Menu, Gtk.MenuItem]:
         """建立整份選單，回傳 (選單, 「開啟儀表板」項目 — 給滑鼠中鍵使用)。"""
         c = self.controller
         menu = Gtk.Menu()
-        self._rows = {}
+        self._rows, self._manage_rows = {}, {}
         for device in c.devices:
-            self._add_device_row(menu, device)
+            self._rows[device.id] = _item(menu, self._row_label(device), lambda d=device: c.set_primary(d.id))
         if not c.devices:
             _item(menu, "尚未加入裝置")
+        else:
+            manage = Gtk.MenuItem.new_with_label("管理裝置")
+            manage.set_submenu(self._build_manage_menu())
+            menu.append(manage)
 
         menu.append(Gtk.SeparatorMenuItem())
         _item(menu, "搜尋新裝置…", c.open_discovery)
@@ -67,35 +71,36 @@ class DeviceMenu:
         menu.show_all()
         return menu, open_dashboard
 
-    def _add_device_row(self, menu: Gtk.Menu, device: Device) -> None:
+    def _build_manage_menu(self) -> Gtk.Menu:
         c = self.controller
-        row = Gtk.MenuItem.new_with_label(self._row_label(device))
-        submenu = Gtk.Menu()
-        details = [_item(submenu, line) for line in detail_lines(device, c.state_for(device.id))]
-        submenu.append(Gtk.SeparatorMenuItem())
-        if device.id == c.primary_id:
-            _item(submenu, "✓ 目前顯示在狀態列")
-        else:
-            _item(submenu, "顯示在狀態列", lambda: c.set_primary(device.id))
-        if device.kind == KIND_STOCK:
-            _item(submenu, "立即更新這台", lambda: c.refresh_now(device.id))
-        _item(submenu, "重新命名…", lambda: c.rename_device(device.id))
-        _item(submenu, "移除此裝置…", lambda: c.remove_device(device.id))
-        row.set_submenu(submenu)
-        menu.append(row)
-        self._rows[device.id] = (row, details)
+        menu = Gtk.Menu()
+        for device in c.devices:
+            row = Gtk.MenuItem.new_with_label(device.name)
+            sub = Gtk.Menu()
+            details = [_item(sub, line) for line in detail_lines(device, c.state_for(device.id))]
+            sub.append(Gtk.SeparatorMenuItem())
+            if device.kind == KIND_STOCK:
+                _item(sub, "立即更新這台", lambda d=device: c.refresh_now(d.id))
+            _item(sub, "重新命名…", lambda d=device: c.rename_device(d.id))
+            _item(sub, "移除此裝置…", lambda d=device: c.remove_device(d.id))
+            row.set_submenu(sub)
+            menu.append(row)
+            self._manage_rows[device.id] = (row, details)
+        return menu
 
     def _row_label(self, device: Device) -> str:
-        mark = PRIMARY_MARK if device.id == self.controller.primary_id else OTHER_MARK
-        return mark + summary_text(device.name, self.controller.state_for(device.id))
+        c = self.controller
+        mark = PRIMARY_MARK if device.id == c.primary_id else OTHER_MARK
+        note = SHOWING_NOTE if device.id == c.displayed_id and device.id != c.primary_id else ""
+        return mark + summary_text(device.name, c.state_for(device.id)) + note
 
     def update_labels(self) -> None:
-        """讀數或狀態更新時只改文字 (資訊列行數固定，不必重建選單)。"""
+        """讀數或狀態更新時只改文字。"""
         for device in self.controller.devices:
             row = self._rows.get(device.id)
-            if row is None:
-                continue
-            item, details = row
-            item.set_label(self._row_label(device))
-            for detail, line in zip(details, detail_lines(device, self.controller.state_for(device.id))):
-                detail.set_label(line)
+            if row is not None:
+                row.set_label(self._row_label(device))
+            manage = self._manage_rows.get(device.id)
+            if manage is not None:
+                for detail, line in zip(manage[1], detail_lines(device, self.controller.state_for(device.id))):
+                    detail.set_label(line)

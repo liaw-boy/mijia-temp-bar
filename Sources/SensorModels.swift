@@ -58,6 +58,15 @@ enum DisplayRules {
         return deviceIDs.allSatisfy { states[$0]?.reachable == false }
     }
 
+    /// 狀態列要顯示哪一台 (帶筆電換地方時用)：主裝置可連線或尚未確認 → 主裝置；
+    /// 主裝置連不到但有別台在附近 → 最近讀到的那台 (不改使用者選的主裝置)；都連不到 → 仍是主裝置
+    static func displayDeviceID(primaryID: String?, orderedIDs: [String], states: [String: DeviceState]) -> String? {
+        guard let primary = primaryID else { return nil }
+        guard states[primary]?.reachable == false else { return primary }
+        let nearby = orderedIDs.filter { $0 != primary && states[$0]?.reachable == true && states[$0]?.reading != nil }
+        return nearby.max { (states[$0]?.reading?.lastUpdated ?? .distantPast) < (states[$1]?.reading?.lastUpdated ?? .distantPast) } ?? primary
+    }
+
     /// 主裝置要顯示在狀態列的 (溫度, 濕度)；連不到時為 nil，畫成 --
     static func trayValues(_ state: DeviceState?) -> (temperature: Double?, humidity: Double?) {
         guard let state = state, let r = state.reading, state.reachable != false else { return (nil, nil) }

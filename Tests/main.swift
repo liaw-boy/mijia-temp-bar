@@ -198,6 +198,21 @@ do {
     check(DisplayRules.summaryText(name: "客廳", state: down) == "客廳 · -- (設備未在連線範圍內)", "摘要連不到")
     check(DisplayRules.summaryText(name: "臥室", state: DeviceState()) == "臥室 · 等待讀取", "摘要等待")
 
+    // 換地方：主裝置不在附近時改顯示附近那台 (最近讀到的)，不改主裝置
+    func st(_ reachable: Bool?, _ minute: Double) -> DeviceState {
+        var rr = r
+        rr.lastUpdated = Date(timeIntervalSince1970: minute * 60)
+        return DeviceState(reading: rr, reachable: reachable, status: "", cached: false)
+    }
+    let C = "C0000000-0000-0000-0000-000000000000"
+    check(DisplayRules.displayDeviceID(primaryID: A, orderedIDs: [A, B], states: [A: st(true, 0), B: st(true, 5)]) == A, "主裝置在附近")
+    check(DisplayRules.displayDeviceID(primaryID: A, orderedIDs: [A, B], states: [A: st(false, 0), B: st(true, 0)]) == B, "主裝置不在改顯示附近那台")
+    check(DisplayRules.displayDeviceID(primaryID: A, orderedIDs: [A, B, C], states: [A: st(false, 0), B: st(true, 1), C: st(true, 9)]) == C, "取最近讀到的")
+    check(DisplayRules.displayDeviceID(primaryID: A, orderedIDs: [A, B], states: [A: st(false, 0), B: st(false, 0)]) == A, "都不在仍是主裝置")
+    check(DisplayRules.displayDeviceID(primaryID: A, orderedIDs: [A, B], states: [A: st(nil, 0), B: st(true, 0)]) == A, "主裝置尚未確認")
+    check(DisplayRules.displayDeviceID(primaryID: A, orderedIDs: [A, B], states: [A: st(false, 0), B: DeviceState(reachable: true)]) == A, "附近那台沒有讀數不算")
+    check(DisplayRules.displayDeviceID(primaryID: nil, orderedIDs: [], states: [:]) == nil, "沒有主裝置")
+
     let bt = hex("40" + "0001" + "015a" + "022909" + "03d711" + "0c860b")
     let stock = DeviceDiscovery.candidate(id: A, name: "LYWSD03MMC", rssi: -61, serviceData: [:])
     check(stock?.kind == .stock && stock?.measurement == nil, "搜尋：原廠名稱")

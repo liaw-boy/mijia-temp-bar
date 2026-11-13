@@ -154,6 +154,57 @@ class PollEngineTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.05)
         self.assertGreater(len(self.reads), count)
 
+    async def test_manual_refresh_preempts_a_backoff_probe(self):
+        # B 連不到 (第一次失敗後進入退避)；B 重試期間手動更新 A，A 要插隊，B 的這次不算失敗
+        slow = asyncio.Event()
+
+        async def read(device_id):
+            self.reads.append(device_id)
+            if device_id == B:
+                await slow.wait()
+                raise asyncio.TimeoutError()
+            return f"reading-{device_id}"
+
+        engine = PollEngine(read, self.recorder, retry=lambda n, i: 0.05, max_wait=0.05)
+        engine.set_interval(10.0)
+        engine.set_devices([B, A])
+        task = asyncio.create_task(engine.run())
+        await asyncio.sleep(0.02)
+        slow.set()                      # B 第一次失敗
+        await asyncio.sleep(0.03)
+        slow.clear()
+        await asyncio.sleep(0.05)       # B 的退避重試卡在連線中
+        self.assertEqual(engine.failures(B), 1)
+        before = len(self.recorder.successes)
+        engine.refresh(A)
+        await asyncio.sleep(0.03)
+        task.cancel()
+        self.assertGreater(len(self.recorder.successes), before)
+        self.assertEqual(self.recorder.successes[-1][0], A)
+        self.assertEqual(engine.failures(B), 1)  # 被插隊中斷的那次不算失敗
+
+    async def test_manual_refresh_does_not_preempt_a_healthy_read(self):
+        self.block = asyncio.Event()
+        self.engine.set_devices([A, B])
+        await asyncio.sleep(0.02)       # A 正常讀取中
+        self.engine.refresh(B)
+        await asyncio.sleep(0.02)
+        self.assertEqual(self.recorder.successes, [])
+        self.block.set()
+        await asyncio.sleep(0.05)
+        self.assertEqual([s[0] for s in self.recorder.successes[:2]], [A, B])
+
+    async def test_reprobe_reads_every_device_now_but_keeps_backoff(self):
+        self.bad.add(B)
+        self.engine.set_interval(10.0)
+        self.engine.set_devices([A, B])
+        await asyncio.sleep(0.05)       # A 成功、B 失敗一次
+        count = len(self.reads)
+        self.engine.reprobe()
+        await asyncio.sleep(0.05)
+        self.assertEqual(sorted(self.reads[count:count + 2]), sorted([A, B]))
+        self.assertEqual(self.engine.failures(B), 2)  # 失敗次數保留 (逾時維持縮短)
+
     async def test_interval_change_rebases_healthy_devices(self):
         self.engine.set_devices([A])
         await asyncio.sleep(0.02)

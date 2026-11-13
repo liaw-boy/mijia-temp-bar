@@ -22,6 +22,7 @@ final class StatusBarController: NSObject {
     private var outsideClickMonitor: Any?
     private var dashboardController: DashboardWindowController?
     private var searchWindow: DeviceSearchWindowController?
+    private var reprobeTriggers: ReprobeTriggers?
 
     init(deviceStore: DeviceStore) {
         self.deviceStore = deviceStore
@@ -42,6 +43,10 @@ final class StatusBarController: NSObject {
 
         refreshTray()
         bluetoothManager.setDevices(deviceStore.devices, order: deviceStore.orderedIDs)
+        // 帶筆電換地方：喚醒或網路變動時立刻重新偵測，狀態列才能改顯示附近那台
+        reprobeTriggers = ReprobeTriggers { [weak self] reason in
+            self?.bluetoothManager.reprobeAll(reason: reason)
+        }
 
         // 啟動後稍等再檢查新版本，避免與藍牙初始化搶資源
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
@@ -179,7 +184,7 @@ final class StatusBarController: NSObject {
 
     private func updateTitle() {
         guard let button = statusItem.button else { return }
-        guard let primary = deviceStore.primary else {
+        guard let primary = deviceStore.device(displayedID) else {
             StatusItemRenderer.showText("🌡️ 尚未加入裝置", on: button)
             button.toolTip = "尚未加入裝置：點一下搜尋新裝置"
             return
@@ -194,7 +199,8 @@ final class StatusBarController: NSObject {
         let values = DisplayRules.trayValues(state)
         StatusItemRenderer.apply(style: displayStyle, temp: values.temperature, hum: values.humidity, to: button)
         let battery = state.reading.map { "\($0.batteryPercent)%" } ?? "--"
-        button.toolTip = "\(primary.name)\n溫度: \(DisplayRules.formatTemp(values.temperature))°C\n" +
+        let note = deviceStore.primary.map { $0.id == primary.id ? "" : " (主裝置 \($0.name) 不在附近)" } ?? ""
+        button.toolTip = "\(primary.name)\(note)\n溫度: \(DisplayRules.formatTemp(values.temperature))°C\n" +
             "濕度: \(DisplayRules.formatHum(values.humidity))%\n電量: \(battery)\n" +
             "更新間隔: \(Int(bluetoothManager.refreshInterval))秒\n狀態: \(state.status)"
     }
@@ -282,12 +288,18 @@ final class StatusBarController: NSObject {
 extension StatusBarController: DeviceCoordinator {
     var devices: [DeviceRecord] { deviceStore.devices }
     var primaryID: String? { deviceStore.primaryID }
+    /// 狀態列實際顯示的裝置：主裝置不在附近時改為附近那台
+    var displayedID: String? {
+        DisplayRules.displayDeviceID(primaryID: deviceStore.primaryID, orderedIDs: deviceStore.orderedIDs, states: states)
+    }
     var globalStatus: String? { adapterStatus.map { s in adapterHint.map { "\(s) · \($0)" } ?? s } }
 
     func state(for id: String) -> DeviceState { states[id] ?? DeviceState() }
 
     func setPrimary(_ id: String) {
+        guard let device = deviceStore.device(id), id != deviceStore.primaryID else { return }
         deviceStore.setPrimary(id)
+        mijiaLog("狀態列主裝置改為 \(device.name) [\(id)]")
         devicesChanged()
     }
 

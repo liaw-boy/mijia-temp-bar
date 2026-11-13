@@ -83,7 +83,14 @@ enum LoginItemManager {
             return .unavailable("無法設定：\(error.localizedDescription)")
         }
         let state = currentState()
-        mijiaLog("登入時自動啟動: \(state.caption)")
+        let summary: String
+        switch state {
+        case .enabled: summary = "已開啟"
+        case .disabled: summary = "已關閉"
+        case .requiresApproval: summary = "需要在系統設定核准"
+        case .unavailable(let reason): summary = "無法設定 (\(reason))"
+        }
+        mijiaLog("登入時自動啟動: \(summary)")
         return state
     }
 

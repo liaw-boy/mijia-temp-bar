@@ -33,6 +33,28 @@ def should_hide_icon(hide_enabled: bool, device_ids: Sequence[str], states: Mapp
     return all(device_id in states and states[device_id].reachable is False for device_id in device_ids)
 
 
+def display_device_id(primary_id: Optional[str], ordered_ids: Sequence[str],
+                      states: Mapping[str, DeviceState]) -> Optional[str]:
+    """狀態列要顯示哪一台 (帶筆電換地方時用)。
+
+    主裝置可連線或尚未確認 → 主裝置；主裝置連不到但有別台在附近 → 最近讀到的那台
+    (不改使用者選的主裝置，回到主裝置附近就換回來)；都連不到 → 仍是主裝置 (畫成 -- 或依設定隱藏)。
+    """
+    if primary_id is None:
+        return None
+    primary = states.get(primary_id)
+    if primary is None or primary.reachable is not False:
+        return primary_id
+    nearby = [
+        device_id for device_id in ordered_ids
+        if device_id != primary_id and device_id in states
+        and states[device_id].reachable is True and states[device_id].reading is not None
+    ]
+    if not nearby:
+        return primary_id
+    return max(nearby, key=lambda device_id: states[device_id].reading.last_updated)
+
+
 def tray_values(state: Optional[DeviceState]) -> Tuple[Optional[float], Optional[float]]:
     """主裝置要顯示在狀態列的 (溫度, 濕度)；連不到時回傳 (None, None) 以顯示 --。"""
     if state is None or state.reading is None or state.reachable is False:

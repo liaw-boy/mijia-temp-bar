@@ -48,6 +48,7 @@ final class BluetoothManager: NSObject {
     private var attempt: Attempt?
     private var attemptCounter = 0
     private var oneShotIDs = Set<String>()            // 離家停機時手動要求的單次讀取
+    private var manualIDs = Set<String>()             // 手動要求更新的裝置，下次優先讀
     private var sleepingAfterRead = Set<String>()     // 讀取成功後主動斷線的裝置 (斷線回呼時記錄「進入休眠」)
     private var scanReasons = Set<ScanReason>()
     private var isScanning = false
@@ -73,6 +74,7 @@ final class BluetoothManager: NSObject {
         let now = Date()
         devices = Dictionary(records.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         order = primaryFirst.filter { devices[$0]?.kind == .stock }
+        manualIDs = manualIDs.filter { devices[$0] != nil }
         runtimes = Dictionary(order.map { ($0, runtimes[$0] ?? Runtime(due: now)) }, uniquingKeysWith: { first, _ in first })
         broadcasts = Dictionary(records.filter { $0.kind == .broadcast }.map {
             ($0.id, broadcasts[$0.id] ?? BroadcastState(lastSeen: now))  // 新加入的廣播裝置給緩衝時間
@@ -105,12 +107,28 @@ final class BluetoothManager: NSObject {
             runtimes[id]?.due = now
             runtimes[id]?.failures = 0
         }
+        manualIDs.formUnion(targets)
+        // 正在對另一台連不到的裝置做離線重試：先中斷那次 (不算失敗)，否則要等它逾時才輪到手動更新
+        if let a = attempt, !targets.contains(a.id), (runtimes[a.id]?.failures ?? 0) > 0 {
+            mijiaLog("手動更新插隊：中斷 [\(a.id)] 的離線重試 (不算失敗)")
+            finishAttempt(a.id, token: a.token, outcome: .cancelled)
+            delegate?.didUpdateDeviceStatus("設備未在連線範圍內", deviceID: a.id, reachable: false)
+        }
         if isSuspended {
             oneShotIDs.formUnion(targets)
             mijiaLog("離家停機中，手動要求只讀取一次 (不解除停機)")
         } else {
             mijiaLog("手動要求立即重新整理 [\(deviceID ?? "全部")]...")
         }
+        scheduleTick(after: 0)
+    }
+
+    /// 換地方 (喚醒、網路變動)：所有原廠裝置立刻重讀一次；失敗次數保留，久未出現的裝置逾時仍較短
+    func reprobeAll(reason: String) {
+        guard !isSuspended else { return }
+        mijiaLog("\(reason)：所有裝置立刻重新偵測")
+        let now = Date()
+        for id in runtimes.keys { runtimes[id]?.due = now }
         scheduleTick(after: 0)
     }
 
@@ -206,8 +224,9 @@ final class BluetoothManager: NSObject {
             return
         }
         let eligible = isSuspended ? order.filter { oneShotIDs.contains($0) } : order
+        let prioritized = eligible.filter { manualIDs.contains($0) } + eligible.filter { !manualIDs.contains($0) }
         let due = runtimes.filter { eligible.contains($0.key) }.mapValues(\.due)
-        let next = Backoff.pickNextDue(due: due, order: eligible, now: Date())
+        let next = Backoff.pickNextDue(due: due, order: prioritized, now: Date())
         if let id = next.id {
             beginAttempt(id)
         } else {
@@ -230,6 +249,7 @@ final class BluetoothManager: NSObject {
         RunLoop.main.add(timer, forMode: .common)
         attempt = Attempt(id: id, token: token, phase: .locating, timer: timer)
         oneShotIDs.remove(id)
+        manualIDs.remove(id)
         delegate?.didUpdateDeviceStatus("更新數據連線中...", deviceID: id, reachable: nil)
 
         if let p = peripherals[uuid] ?? centralManager.retrievePeripherals(withIdentifiers: [uuid]).first {

@@ -4,6 +4,8 @@ import AppKit
 protocol DeviceCoordinator: AnyObject {
     var devices: [DeviceRecord] { get }
     var primaryID: String? { get }
+    /// 狀態列實際顯示的裝置 (主裝置不在附近時是附近那台)
+    var displayedID: String? { get }
     /// 藍牙關閉、離家停機等全域狀態；正常時為 nil
     var globalStatus: String? { get }
     func state(for id: String) -> DeviceState
@@ -33,7 +35,8 @@ final class ClosureMenuItem: NSMenuItem {
     @objc private func fire() { handler() }
 }
 
-/// 右鍵選單：每台裝置一列 (主裝置打勾)，子選單可切換主裝置、立即更新、改名、移除
+/// 右鍵選單：第一層每台裝置一列，直接點就切換「狀態列顯示這台」(主裝置打勾)；
+/// 每台的詳細資訊與立即更新、改名、移除放在「管理裝置」子選單
 enum DeviceMenuBuilder {
     static func contextMenu(for c: DeviceCoordinator) -> NSMenu {
         let menu = deviceMenu(for: c)
@@ -48,10 +51,17 @@ enum DeviceMenuBuilder {
         let menu = NSMenu()
         menu.autoenablesItems = false
         for device in c.devices {
-            menu.addItem(deviceRow(device, c))
+            menu.addItem(primaryRow(device, c))
         }
         if c.devices.isEmpty {
             menu.addItem(disabled("尚未加入裝置"))
+        } else {
+            let manage = NSMenuItem(title: "管理裝置", action: nil, keyEquivalent: "")
+            let sub = NSMenu()
+            sub.autoenablesItems = false
+            for device in c.devices { sub.addItem(manageRow(device, c)) }
+            manage.submenu = sub
+            menu.addItem(manage)
         }
         menu.addItem(.separator())
         menu.addItem(ClosureMenuItem(title: "搜尋新裝置…") { c.openDeviceSearch() })
@@ -61,21 +71,24 @@ enum DeviceMenuBuilder {
         return menu
     }
 
-    private static func deviceRow(_ device: DeviceRecord, _ c: DeviceCoordinator) -> NSMenuItem {
-        let state = c.state(for: device.id)
-        let isPrimary = device.id == c.primaryID
-        let row = NSMenuItem(title: DisplayRules.summaryText(name: device.name, state: state), action: nil, keyEquivalent: "")
-        row.state = isPrimary ? .on : .off
+    /// 第一層：點一下就把這台設為狀態列顯示的主裝置
+    private static func primaryRow(_ device: DeviceRecord, _ c: DeviceCoordinator) -> NSMenuItem {
+        var title = DisplayRules.summaryText(name: device.name, state: c.state(for: device.id))
+        if device.id == c.displayedID && device.id != c.primaryID {
+            title += "  (主裝置不在附近，狀態列顯示這台)"
+        }
+        let row = ClosureMenuItem(title: title) { c.setPrimary(device.id) }
+        row.state = device.id == c.primaryID ? .on : .off
+        return row
+    }
 
+    /// 「管理裝置」裡的每一台：詳細資訊、立即更新、改名、移除
+    private static func manageRow(_ device: DeviceRecord, _ c: DeviceCoordinator) -> NSMenuItem {
+        let row = NSMenuItem(title: device.name, action: nil, keyEquivalent: "")
         let sub = NSMenu()
         sub.autoenablesItems = false
-        for line in detailLines(device, state) { sub.addItem(disabled(line)) }
+        for line in detailLines(device, c.state(for: device.id)) { sub.addItem(disabled(line)) }
         sub.addItem(.separator())
-        if isPrimary {
-            sub.addItem(disabled("✓ 目前顯示在狀態列"))
-        } else {
-            sub.addItem(ClosureMenuItem(title: "顯示在狀態列") { c.setPrimary(device.id) })
-        }
         if device.kind == .stock {
             sub.addItem(ClosureMenuItem(title: "立即更新這台") { c.refresh(device.id) })
         }

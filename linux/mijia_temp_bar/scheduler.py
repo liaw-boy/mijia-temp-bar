@@ -58,6 +58,7 @@ class PollListener(Protocol):
     def on_poll_success(self, device_id: str, result: Any, next_due: float) -> None: ...
     def on_poll_failure(self, device_id: str, error: BaseException, delay: float, failures: int) -> None: ...
     def on_adapter_unavailable(self, error: AdapterUnavailable, delay: float) -> None: ...
+    def on_poll_preempted(self, device_id: str) -> None: ...
 
 
 @dataclass
@@ -82,6 +83,10 @@ class PollEngine:
         self._order: List[str] = []
         self._runtimes: Dict[str, _Runtime] = {}
         self._paused = False
+        self._priority: List[str] = []             # 手動要求更新的裝置，下次優先讀
+        self._current: Optional[asyncio.Future] = None
+        self._current_id: Optional[str] = None
+        self._preempted = False
         self._wake = asyncio.Event()
         self._idle = asyncio.Event()
         self._idle.set()
@@ -93,6 +98,7 @@ class PollEngine:
         now = self._clock()
         self._order = list(device_ids)
         self._runtimes = {i: self._runtimes.get(i) or _Runtime(due=now) for i in self._order}
+        self._priority = [i for i in self._priority if i in self._runtimes]
         self._wake.set()
 
     def set_interval(self, seconds: float) -> None:
@@ -105,12 +111,30 @@ class PollEngine:
         self._wake.set()
 
     def refresh(self, device_id: Optional[str] = None) -> None:
-        """立刻更新指定裝置 (None 為全部)，並重設其退避。"""
+        """立刻更新指定裝置 (None 為全部)，並重設其退避。
+
+        若目前正在對另一台連不到的裝置做離線重試，先中斷那次 (不算失敗)，
+        否則手動更新要等它連線逾時才會開始。
+        """
         now = self._clock()
-        for key, runtime in self._runtimes.items():
-            if device_id is None or key == device_id:
-                runtime.due = now
-                runtime.failures = 0
+        targets = [key for key in self._runtimes if device_id is None or key == device_id]
+        for key in targets:
+            self._runtimes[key].due = now
+            self._runtimes[key].failures = 0
+            if key not in self._priority:
+                self._priority.append(key)
+        current = self._runtimes.get(self._current_id) if self._current_id else None
+        if (self._current is not None and self._current_id not in targets
+                and current is not None and current.failures > 0):
+            self._preempted = True
+            self._current.cancel()
+        self._wake.set()
+
+    def reprobe(self) -> None:
+        """換地方 (喚醒、網路變動) 時所有裝置立刻重讀一次；失敗次數保留，久未出現的裝置逾時仍較短。"""
+        now = self._clock()
+        for runtime in self._runtimes.values():
+            runtime.due = now
         self._wake.set()
 
     async def pause(self) -> None:
@@ -138,7 +162,8 @@ class PollEngine:
                 device_id, wait = None, self._max_wait
             else:
                 due = {key: runtime.due for key, runtime in self._runtimes.items()}
-                device_id, wait = pick_next_due(due, self._order, self._clock(), self._max_wait)
+                order = self._priority + [i for i in self._order if i not in self._priority]
+                device_id, wait = pick_next_due(due, order, self._clock(), self._max_wait)
             if device_id is None:
                 await self._sleep(wait)
             else:
@@ -152,10 +177,21 @@ class PollEngine:
         self._wake.clear()
 
     async def _read_one(self, device_id: str) -> None:
+        if device_id in self._priority:
+            self._priority.remove(device_id)
         self._idle.clear()
+        self._current_id = device_id
+        self._current = asyncio.ensure_future(self._read(device_id))
         try:
-            result = await self._read(device_id)
+            result = await self._current
         except asyncio.CancelledError:
+            if self._preempted:
+                self._preempted = False
+                mijia_log(f"手動更新插隊：中斷 [{device_id}] 的離線重試 (不算失敗)")
+                preempted = getattr(self._listener, "on_poll_preempted", None)
+                if preempted is not None:
+                    self._notify(preempted, device_id)
+                return
             raise
         except AdapterUnavailable as e:
             self._delay_all(e)
@@ -164,6 +200,8 @@ class PollEngine:
         else:
             self._record_success(device_id, result)
         finally:
+            self._current = None
+            self._current_id = None
             self._idle.set()
 
     def _record_success(self, device_id: str, result: Any) -> None:

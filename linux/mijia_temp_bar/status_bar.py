@@ -23,7 +23,14 @@ except (ValueError, ImportError):
 from . import device_dialogs, notifications, update_check  # noqa: E402
 from .bluetooth import DISCOVERY_SECONDS, BluetoothManager  # noqa: E402
 from .device_menu import DeviceMenu  # noqa: E402
-from .device_state import DeviceState, should_hide_icon, tray_values, with_reading, with_status  # noqa: E402
+from .device_state import (  # noqa: E402
+    DeviceState,
+    display_device_id,
+    should_hide_icon,
+    tray_values,
+    with_reading,
+    with_status,
+)
 from .devices import KIND_STOCK, Device, DeviceStore, default_name  # noqa: E402
 from .discovery import Candidate  # noqa: E402
 from .history import HISTORY_DIR, LEGACY_HISTORY_PATH, HistoryManager  # noqa: E402
@@ -31,6 +38,7 @@ from .icons import TrayIconWriter, format_hum, format_temp, render_stacked, rend
 from .logger import mijia_log  # noqa: E402
 from .options import DisplayStyle  # noqa: E402
 from .parsers import MODE_STOCK, SensorReading  # noqa: E402
+from .presence import ReprobeTriggers  # noqa: E402
 from .settings import CONFIG_DIR, RUNTIME_DIR, settings  # noqa: E402
 from .status_file import build_status_payload, write_status_json  # noqa: E402
 
@@ -80,6 +88,8 @@ class StatusBarController:
         self._refresh_tray()
 
         self.bluetooth_manager.start(self.devices, self.device_store.ordered_ids())
+        # 帶筆電換地方：喚醒或網路變動時立刻重新偵測，狀態列才能改顯示附近那台
+        self._reprobe = ReprobeTriggers(self.bluetooth_manager.reprobe_all)
         GLib.timeout_add_seconds(8, self._auto_check_update)
         if not self.devices and settings.get(DISCOVERY_PROMPTED_KEY) is not True:
             GLib.timeout_add_seconds(2, self._first_run_discovery)
@@ -141,6 +151,11 @@ class StatusBarController:
     def state_for(self, device_id: Optional[str]) -> DeviceState:
         return self.states.get(device_id, DeviceState()) if device_id else DeviceState()
 
+    @property
+    def displayed_id(self) -> Optional[str]:
+        """狀態列實際顯示的裝置：主裝置不在附近時改為附近那台。"""
+        return display_device_id(self.primary_id, self.device_store.ordered_ids(), self.states)
+
     # MARK: - 系統匣圖示
 
     def _setup_indicator(self) -> None:
@@ -170,7 +185,7 @@ class StatusBarController:
         self.device_menu.update_labels()
 
     def _update_title(self) -> None:
-        primary = self.device_store.get(self.primary_id)
+        primary = self.device_store.get(self.displayed_id)
         if primary is None:
             text = "🌡️ 尚未加入裝置"
             self._set_tray_image(("text", text), lambda: render_text(text), "尚未加入裝置，請從選單搜尋新裝置")
@@ -183,7 +198,7 @@ class StatusBarController:
 
         # 主裝置連不到時 tray_values 回傳 None，圖示顯示 --
         t, h = tray_values(state)
-        key = ("values", self.display_style, format_temp(t), format_hum(h), primary.id, state.status)
+        key = ("values", self.display_style, format_temp(t), format_hum(h), primary.id, self.primary_id, state.status)
         self._set_tray_image(key, lambda: self._render_values(t, h), self._tooltip(primary, state, t, h))
 
     def _render_values(self, t: Optional[float], h: Optional[float]):
@@ -200,8 +215,10 @@ class StatusBarController:
 
     def _tooltip(self, device: Device, state: DeviceState, t: Optional[float], h: Optional[float]) -> str:
         battery = f"{state.reading.battery_percent}%" if state.reading else "--"
+        main = self.device_store.get(self.primary_id)
+        note = f" (主裝置 {main.name} 不在附近)" if main is not None and main.id != device.id else ""
         return (
-            f"{device.name}\n溫度: {format_temp(t)}°C\n濕度: {format_hum(h)}%\n電量: {battery}\n"
+            f"{device.name}{note}\n溫度: {format_temp(t)}°C\n濕度: {format_hum(h)}%\n電量: {battery}\n"
             f"更新間隔: {int(self.bluetooth_manager.refresh_interval)}秒\n狀態: {state.status}"
         )
 
@@ -272,7 +289,11 @@ class StatusBarController:
     # MARK: - 裝置管理
 
     def set_primary(self, device_id: str) -> None:
+        device = self.device_store.get(device_id)
+        if device is None or device_id == self.primary_id:
+            return
         self.device_store.set_primary(device_id)
+        mijia_log(f"狀態列主裝置改為 {device.name} [{device_id}]")
         self._devices_changed()
 
     def rename_device(self, device_id: str, parent: Optional[Gtk.Window] = None) -> None:

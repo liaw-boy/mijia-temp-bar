@@ -3,6 +3,7 @@ from datetime import datetime
 
 from mijia_temp_bar.device_state import (
     DeviceState,
+    display_device_id,
     should_hide_icon,
     summary_text,
     tray_values,
@@ -65,6 +66,46 @@ class TrayValueTests(unittest.TestCase):
         state = with_status(with_reading(DeviceState(), reading()), "設備未在連線範圍內", False)
         self.assertEqual(tray_values(state), (None, None))
         self.assertEqual(tray_values(None), (None, None))
+
+
+class DisplayDeviceTests(unittest.TestCase):
+    """帶筆電換地方：主裝置不在附近時改顯示附近那台，不改使用者選的主裝置。"""
+
+    def setUp(self):
+        self.C = "A4:C1:38:33:44:55"
+
+    def state(self, reachable, minute=0):
+        r = reading()
+        r = SensorReading(r.temperature, r.humidity, r.battery_percent, r.voltage, None, "x",
+                          datetime(2026, 11, 14, 9, minute), r.mode)
+        return DeviceState(reading=r, reachable=reachable)
+
+    def test_primary_nearby(self):
+        states = {A: self.state(True), B: self.state(True, 5)}
+        self.assertEqual(display_device_id(A, [A, B], states), A)
+
+    def test_primary_away_shows_nearby_device(self):
+        states = {A: self.state(False), B: self.state(True)}
+        self.assertEqual(display_device_id(A, [A, B], states), B)
+
+    def test_picks_most_recent_nearby_device(self):
+        states = {A: self.state(False), B: self.state(True, 1), self.C: self.state(True, 9)}
+        self.assertEqual(display_device_id(A, [A, B, self.C], states), self.C)
+
+    def test_all_away_keeps_primary(self):
+        states = {A: self.state(False), B: self.state(False)}
+        self.assertEqual(display_device_id(A, [A, B], states), A)
+
+    def test_unknown_primary_keeps_primary(self):
+        states = {A: DeviceState(reading=reading(), reachable=None, cached=True), B: self.state(True)}
+        self.assertEqual(display_device_id(A, [A, B], states), A)
+
+    def test_nearby_device_without_reading_is_skipped(self):
+        states = {A: self.state(False), B: DeviceState(reachable=True)}
+        self.assertEqual(display_device_id(A, [A, B], states), A)
+
+    def test_no_primary(self):
+        self.assertIsNone(display_device_id(None, [], {}))
 
 
 class SummaryTextTests(unittest.TestCase):

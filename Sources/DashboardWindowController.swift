@@ -79,6 +79,7 @@ final class DashboardWindowController: NSWindowController {
     weak var coordinator: DeviceCoordinator?
     private(set) var selectedDeviceID: String?
     var devicePopUp: NSPopUpButton!
+    var primaryButton: NSButton!
     private var popUpDeviceIDs: [String] = []
 
     // 回呼閉包 (與 StatusBarController 連動)；立即更新帶目前選的裝置
@@ -142,6 +143,14 @@ final class DashboardWindowController: NSWindowController {
         devicePopUp.action = #selector(handleDeviceSelected)
         devicePopUp.toolTip = "選擇要查看的裝置"
         headerBar.addSubview(devicePopUp)
+
+        // 下拉選單只決定儀表板看哪一台；按這個按鈕才改狀態列顯示的主裝置 (取代原本的型號標章位置)
+        primaryButton = NSButton(title: "設為狀態列", target: self, action: #selector(handleMakePrimary))
+        primaryButton.bezelStyle = .rounded
+        primaryButton.controlSize = .small
+        primaryButton.font = NSFont.systemFont(ofSize: 11)
+        primaryButton.frame = NSRect(x: 210, y: 21, width: 84, height: 24)
+        headerBar.addSubview(primaryButton)
 
         modelBadgeLabel = NSTextField(labelWithString: "LYWSD03MMC")
         modelBadgeLabel.frame = NSRect(x: 210, y: 26, width: 85, height: 16)
@@ -339,7 +348,7 @@ final class DashboardWindowController: NSWindowController {
         popUpDeviceIDs = devices.map(\.id)
         devicePopUp.removeAllItems()
         // 直接加 NSMenuItem：addItem(withTitle:) 會把同名的項目合併，改名成相同名稱時會少一台
-        let titles = devices.map { $0.id == coordinator?.primaryID ? "\($0.name)  (狀態列)" : $0.name }
+        let titles = devices.map(\.name)
         for title in titles.isEmpty ? ["尚未加入裝置"] : titles {
             devicePopUp.menu?.addItem(NSMenuItem(title: title, action: nil, keyEquivalent: ""))
         }
@@ -357,6 +366,10 @@ final class DashboardWindowController: NSWindowController {
         applySelectedState()
     }
 
+    @objc private func handleMakePrimary() {
+        if let id = selectedDeviceID { coordinator?.setPrimary(id) }
+    }
+
     @objc private func handleDeviceSelected() {
         let i = devicePopUp.indexOfSelectedItem
         guard popUpDeviceIDs.indices.contains(i) else { return }
@@ -372,6 +385,11 @@ final class DashboardWindowController: NSWindowController {
     func applySelectedState() {
         let device = coordinator?.devices.first { $0.id == selectedDeviceID }
         modelBadgeLabel.stringValue = device?.kind == .broadcast ? "開源廣播" : "LYWSD03MMC"
+        modelBadgeLabel.isHidden = true  // 位置讓給「設為狀態列」按鈕；連線模式在右鍵選單的裝置資訊裡
+        let isPrimary = device != nil && device?.id == coordinator?.primaryID
+        primaryButton.title = isPrimary ? "✓ 狀態列" : "設為狀態列"
+        primaryButton.isEnabled = device != nil && !isPrimary
+        primaryButton.isHidden = device == nil
         refreshButton.isEnabled = device?.kind == .stock  // 開源廣播裝置本來就持續更新
         let state = selectedDeviceID.flatMap { coordinator?.state(for: $0) } ?? DeviceState()
         if let r = state.reading {

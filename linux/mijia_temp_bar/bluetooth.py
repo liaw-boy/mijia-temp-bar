@@ -149,6 +149,11 @@ class BluetoothManager:
         mijia_log(f"手動要求立即重新整理 [{device_id or '全部'}]...")
         self._call(self._engine.refresh, device_id)
 
+    def reprobe_all(self, reason: str) -> None:
+        """換地方 (喚醒、網路變動)：所有原廠裝置立刻重讀一次，狀態列才能及時改顯示附近那台。"""
+        mijia_log(f"{reason}：所有裝置立刻重新偵測")
+        self._call(self._engine.reprobe)
+
     def start_discovery(self, on_update: Callable[[List[Candidate]], None],
                         on_finished: Callable[[List[Candidate]], None],
                         duration: float = DISCOVERY_SECONDS) -> None:
@@ -272,6 +277,10 @@ class BluetoothManager:
             status = "連線失敗，等待下次輪詢"
         mijia_log(f"離線退避 [{device_id}] (連續失敗 {failures} 次)，{int(delay)} 秒後重試")
         self._emit_device_status(device_id, status, False)
+
+    def on_poll_preempted(self, device_id: str) -> None:
+        """離線重試被手動更新插隊中斷：狀態改回連不到 (不要停在「連線中」)。"""
+        self._emit_device_status(device_id, "設備未在連線範圍內", False)
 
     def on_adapter_unavailable(self, error: AdapterUnavailable, delay: float) -> None:
         self._report_adapter(error)

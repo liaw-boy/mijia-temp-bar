@@ -36,7 +36,7 @@ class DevicesSection:
         is_primary = device.id == c.primary_id
         controls = []
         if not is_primary:
-            controls.append(self._button("顯示在狀態列", lambda: c.set_primary(device.id)))
+            controls.append(self._button("設為狀態列", lambda: c.set_primary(device.id)))
         controls.append(self._button("改名", lambda: self.dashboard.run_busy(
             lambda: c.rename_device(device.id, self.dashboard))))
         controls.append(self._button("移除", lambda: self.dashboard.run_busy(

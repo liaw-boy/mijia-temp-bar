@@ -193,9 +193,15 @@ class DashboardWindow(Gtk.Window):
         self.device_combo.set_tooltip_text("選擇要查看的裝置")
         self.device_combo.connect("changed", self._handle_device_changed)
         title_row.pack_start(self.device_combo, False, False, 0)
+        # 下拉選單只決定儀表板看哪一台；按這個按鈕才改狀態列顯示的主裝置
+        self.primary_button = Gtk.Button(label="設為狀態列")
+        self.primary_button.set_no_show_all(True)  # 沒有裝置時保持隱藏 (show_all 不會把它打開)
+        self.primary_button.set_size_request(104, -1)  # 固定寬度：換標籤時面板不會跟著變寬
+        self.primary_button.set_valign(Gtk.Align.CENTER)
+        self.primary_button.connect("clicked", lambda _b: self._make_selected_primary())
+        title_row.pack_start(self.primary_button, False, False, 0)
+        # 型號標章的位置讓給按鈕 (連線模式在系統匣選單的「管理裝置」裡看得到)
         self.model_badge = _label("LYWSD03MMC", "model-badge")
-        self.model_badge.set_valign(Gtk.Align.CENTER)
-        title_row.pack_start(self.model_badge, False, False, 0)
         titles.pack_start(title_row, False, False, 0)
         self.status_label = _label("● 搜尋中", "status-dot")
         self.status_label.set_ellipsize(Pango.EllipsizeMode.END)
@@ -235,8 +241,7 @@ class DashboardWindow(Gtk.Window):
         try:
             self.device_combo.remove_all()
             for device in devices:
-                mark = "  (狀態列)" if device.id == self.controller.primary_id else ""
-                self.device_combo.append_text(device.name + mark)
+                self.device_combo.append_text(device.name)
             if not devices:
                 self.device_combo.append_text("尚未加入裝置")
         finally:
@@ -255,6 +260,10 @@ class DashboardWindow(Gtk.Window):
         finally:
             self._loading = False
         self._apply_selected_state()
+
+    def _make_selected_primary(self) -> None:
+        if self.selected_id is not None:
+            self.controller.set_primary(self.selected_id)
 
     def _handle_device_changed(self, combo: Gtk.ComboBoxText) -> None:
         index = combo.get_active()
@@ -275,6 +284,10 @@ class DashboardWindow(Gtk.Window):
         self.model_badge.set_text("LYWSD03MMC" if device is None or device.kind == KIND_STOCK else "開源廣播")
         # 開源廣播裝置本來就持續更新，沒有「立即更新」
         self.refresh_button.set_sensitive(device is not None and device.kind == KIND_STOCK)
+        is_primary = device is not None and device.id == self.controller.primary_id
+        self.primary_button.set_label("✓ 狀態列" if is_primary else "設為狀態列")
+        self.primary_button.set_sensitive(device is not None and not is_primary)
+        self.primary_button.set_visible(device is not None)
         if state.reading is not None:
             self._show_reading(state.reading)
         else:
