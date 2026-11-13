@@ -1,27 +1,29 @@
 import Foundation
 
-/// 狀態 JSON (給外部腳本讀取)：頂層欄位維持舊格式代表主裝置，另加每台裝置的 devices 陣列
+/// 狀態 JSON (給外部腳本讀取)：頂層欄位維持舊格式，代表狀態列目前顯示的那台
+/// (平常是主裝置；主裝置不在附近時是附近那台)，另加每台裝置的 devices 陣列
 enum StatusFile {
-    static func payload(devices: [DeviceRecord], states: [String: DeviceState], primaryID: String?,
+    static func payload(devices: [DeviceRecord], states: [String: DeviceState], primaryID: String?, displayedID: String?,
                         interval: TimeInterval, adapterStatus: String?, now: Date = Date()) -> [String: Any] {
-        let primary = devices.first { $0.id == primaryID }
-        let primaryState = primary.map { states[$0.id] ?? DeviceState() }
+        let shown = devices.first { $0.id == (displayedID ?? primaryID) }
+        let shownState = shown.map { states[$0.id] ?? DeviceState() }
         let iso = ISO8601DateFormatter()
 
         var dict: [String: Any] = [
-            "status": adapterStatus ?? primaryState?.status ?? "尚未加入裝置",
+            "status": adapterStatus ?? shownState?.status ?? "尚未加入裝置",
             "timestamp": iso.string(from: now),
             "refreshIntervalSeconds": Int(interval)
         ]
-        if let p = primary, let r = primaryState?.reading {
+        if let d = shown, let r = shownState?.reading {
             dict["temperature"] = r.temperature
             dict["humidity"] = r.humidity
             dict["batteryPercent"] = r.batteryPercent
             dict["voltage"] = r.voltage
-            dict["deviceName"] = p.name
+            dict["deviceName"] = d.name
             dict["mode"] = r.mode
         }
         dict["primaryDeviceId"] = primaryID ?? NSNull()
+        dict["displayedDeviceId"] = shown?.id ?? NSNull()
         dict["devices"] = devices.map { entry($0, states[$0.id] ?? DeviceState(), primary: $0.id == primaryID, iso: iso) }
         return dict
     }

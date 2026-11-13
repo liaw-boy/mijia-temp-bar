@@ -88,7 +88,7 @@ class StatusBarController:
         self._refresh_tray()
 
         self.bluetooth_manager.start(self.devices, self.device_store.ordered_ids())
-        # 帶筆電換地方：喚醒或網路變動時立刻重新偵測，狀態列才能改顯示附近那台
+        # 帶筆電換地方：喚醒或換到另一個網路時立刻重新偵測，狀態列才能改顯示附近那台
         self._reprobe = ReprobeTriggers(self.bluetooth_manager.reprobe_all)
         GLib.timeout_add_seconds(8, self._auto_check_update)
         if not self.devices and settings.get(DISCOVERY_PROMPTED_KEY) is not True:
@@ -443,6 +443,7 @@ class StatusBarController:
         payload = build_status_payload(
             self.devices, self.states, self.primary_id, self.bluetooth_manager.refresh_interval,
             datetime.now().astimezone().isoformat(timespec="seconds"), self.adapter_status,
+            displayed_id=self.displayed_id,
         )
         write_status_json(payload)
         return GLib.SOURCE_REMOVE

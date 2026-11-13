@@ -123,7 +123,7 @@ final class BluetoothManager: NSObject {
         scheduleTick(after: 0)
     }
 
-    /// 換地方 (喚醒、網路變動)：所有原廠裝置立刻重讀一次；失敗次數保留，久未出現的裝置逾時仍較短
+    /// 換地方 (喚醒、換網路)：所有原廠裝置立刻重讀一次；失敗次數保留，久未出現的裝置逾時仍較短
     func reprobeAll(reason: String) {
         guard !isSuspended else { return }
         mijiaLog("\(reason)：所有裝置立刻重新偵測")

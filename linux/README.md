@@ -16,7 +16,7 @@ MijiaTempBar 的 Linux 移植版本：在桌面系統匣（GNOME 頂部面板 / 
 ## 功能 (Features)
 
 - **多台溫濕度計**：從選單「搜尋新裝置…」掃描約 20 秒後勾選加入（不會自動加入鄰居的）；狀態列顯示一台「主裝置」，選單第一層直接點就切換，「管理裝置」子選單可立即更新、改名、移除。每台的讀取、歷史、退避與通知各自獨立，一台連不到不影響其他台。
-- **帶筆電換地方**：主裝置不在附近、但別台在附近時，狀態列自動改顯示附近那台（不改主裝置設定）；從睡眠喚醒（systemd-logind）或網路變動時所有裝置立刻重新偵測。
+- **帶筆電換地方**：主裝置不在附近、但別台在附近時，狀態列自動改顯示附近那台（不改主裝置設定）；從睡眠喚醒（systemd-logind）或換到另一個網路（預設閘道不同）時所有裝置立刻重新偵測；VPN、Docker 等虛擬介面的變動不算，避免多耗溫濕度計電池。
 - **與 macOS 版相同的 5 種狀態列樣式**：雙行微型膠囊 `[TMP] / [HUM]`、純數字雙行堆疊、橫向完整、僅溫度、緊湊單行。
 - **原廠韌體「即連即斷」省電讀取**：透過 BlueZ GATT 讀取一次數據後立即斷線，讓硬體回到 Deep Sleep。
 - **開源韌體廣播**：自動解析 ATC1441 / pvvx / BTHome v2（未加密）廣播。
@@ -104,7 +104,7 @@ python3 -m unittest
 | 偏好設定 (含裝置清單 `Devices`、主裝置 `PrimaryDeviceID`) | UserDefaults | `~/.config/mijia-temp-bar/settings.json` |
 | 歷史數據 (每台一個檔) | `~/Library/Application Support/MijiaTempBar/history/<裝置>.json` | `~/.local/share/mijia-temp-bar/history/<藍牙位址>.json` |
 | 除錯日誌 | `~/Library/Logs/MijiaTempBar/mijia_temp_bar.log` | `~/.local/state/mijia-temp-bar/mijia_temp_bar.log` |
-| 即時狀態 JSON (頂層為主裝置，`devices` 陣列為每一台) | `~/Library/Application Support/MijiaTempBar/mijia_status.json` | `$XDG_RUNTIME_DIR/mijia-temp-bar/mijia_status.json` |
+| 即時狀態 JSON (頂層為狀態列顯示的那台，`devices` 陣列為每一台) | `~/Library/Application Support/MijiaTempBar/mijia_status.json` | `$XDG_RUNTIME_DIR/mijia-temp-bar/mijia_status.json` |
 
 **從單一裝置版本升級**：第一次啟動會把原本記住的那台 (`TargetAddress`) 加入清單並設為主裝置，舊的 `history.json` 複製到新的每台歷史檔；舊設定鍵與舊檔都保留不動，另存一份 `settings.pre-multidevice.json` 備份。
 
@@ -133,7 +133,8 @@ linux/
 │   ├── devices.py            # 裝置清單、主裝置與舊版設定遷移       (DeviceStore.swift / Migration.swift)
 │   ├── device_state.py       # 每台狀態、隱藏與 -- 顯示規則         (SensorModels.swift)
 │   ├── scheduler.py          # 一次只讀一台的輪詢排程與退避         (Backoff.swift)
-│   ├── presence.py           # 喚醒、網路變動時重新偵測             (ReprobeTriggers.swift)
+│   ├── presence.py           # 喚醒、換網路時重新偵測               (ReprobeTriggers.swift)
+│   ├── network_signature.py  # 比對預設閘道判斷是否換網路           (NetworkSignature.swift)
 │   ├── discovery.py          # 搜尋候選分類                         (DeviceDiscovery.swift)
 │   ├── status_file.py        # 即時狀態 JSON                        (StatusFile.swift)
 │   ├── bluetooth.py          # BlueZ (bleak) 掃描、GATT 即連即斷    (BluetoothManager.swift)

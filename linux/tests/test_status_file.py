@@ -135,6 +135,28 @@ class StatusPayloadTests(unittest.TestCase):
             "reachable": False, "status": "未收到廣播",
         })
 
+    def test_top_level_follows_displayed_device(self):
+        """主裝置不在附近、狀態列改顯示附近那台時，頂層欄位也跟著是那台，外部程式不會讀到舊數字。"""
+        devices = (Device(A, "客廳", KIND_STOCK), Device(B, "臥室", KIND_STOCK))
+        states = {
+            A: with_status(DeviceState(reading=reading(20.0, 50.0)), "設備未在連線範圍內", False),
+            B: with_reading(DeviceState(), reading(26.0, 70.0)),
+        }
+        payload = build_status_payload(devices, states, A, 300.0, "t", displayed_id=B)
+
+        self.assertEqual(payload["temperature"], 26.0)
+        self.assertEqual(payload["deviceName"], "臥室")
+        self.assertEqual(payload["status"], "正常運作中")
+        self.assertEqual(payload["primaryDeviceId"], A)
+        self.assertEqual(payload["displayedDeviceId"], B)
+        self.assertTrue(payload["devices"][0]["primary"])
+
+    def test_displayed_defaults_to_primary(self):
+        devices = (Device(A, "客廳", KIND_STOCK),)
+        payload = build_status_payload(devices, {A: with_reading(DeviceState(), reading())}, A, 300.0, "t")
+        self.assertEqual(payload["displayedDeviceId"], A)
+        self.assertEqual(payload["deviceName"], "客廳")
+
     def test_adapter_status_overrides(self):
         payload = build_status_payload((), {}, None, 300.0, "t", adapter_status="電腦藍牙已關閉")
         self.assertEqual(payload["status"], "電腦藍牙已關閉")

@@ -150,7 +150,7 @@ class BluetoothManager:
         self._call(self._engine.refresh, device_id)
 
     def reprobe_all(self, reason: str) -> None:
-        """換地方 (喚醒、網路變動)：所有原廠裝置立刻重讀一次，狀態列才能及時改顯示附近那台。"""
+        """換地方 (喚醒、換網路)：所有原廠裝置立刻重讀一次，狀態列才能及時改顯示附近那台。"""
         mijia_log(f"{reason}：所有裝置立刻重新偵測")
         self._call(self._engine.reprobe)
 

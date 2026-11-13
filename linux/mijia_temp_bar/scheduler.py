@@ -131,7 +131,7 @@ class PollEngine:
         self._wake.set()
 
     def reprobe(self) -> None:
-        """換地方 (喚醒、網路變動) 時所有裝置立刻重讀一次；失敗次數保留，久未出現的裝置逾時仍較短。"""
+        """換地方 (喚醒、換網路) 時所有裝置立刻重讀一次；失敗次數保留，久未出現的裝置逾時仍較短。"""
         now = self._clock()
         for runtime in self._runtimes.values():
             runtime.due = now

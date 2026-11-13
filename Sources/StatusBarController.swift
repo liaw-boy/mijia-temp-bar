@@ -43,7 +43,7 @@ final class StatusBarController: NSObject {
 
         refreshTray()
         bluetoothManager.setDevices(deviceStore.devices, order: deviceStore.orderedIDs)
-        // 帶筆電換地方：喚醒或網路變動時立刻重新偵測，狀態列才能改顯示附近那台
+        // 帶筆電換地方：喚醒或換到另一個網路時立刻重新偵測，狀態列才能改顯示附近那台
         reprobeTriggers = ReprobeTriggers { [weak self] reason in
             self?.bluetoothManager.reprobeAll(reason: reason)
         }
@@ -280,7 +280,8 @@ final class StatusBarController: NSObject {
         statusWriteTimer = nil
         lastStatusWrite = Date()
         StatusFile.write(StatusFile.payload(devices: deviceStore.devices, states: states, primaryID: deviceStore.primaryID,
-                                            interval: bluetoothManager.refreshInterval, adapterStatus: adapterStatus))
+                                            displayedID: displayedID, interval: bluetoothManager.refreshInterval,
+                                            adapterStatus: adapterStatus))
     }
 }
 

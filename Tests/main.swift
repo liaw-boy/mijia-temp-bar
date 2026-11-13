@@ -228,10 +228,86 @@ do {
           DiscoveredDevice(id: A, name: "x", kind: .broadcast, rssi: -50, measurement: nil), "搜尋：合併")
 
     let payload = StatusFile.payload(devices: [DeviceRecord(id: A, name: "客廳", kind: .stock), DeviceRecord(id: B, name: "臥室", kind: .broadcast)],
-                                     states: [A: up], primaryID: A, interval: 300, adapterStatus: nil)
+                                     states: [A: up], primaryID: A, displayedID: A, interval: 300, adapterStatus: nil)
     check(payload["temperature"] as? Double == 24.5 && payload["deviceName"] as? String == "客廳", "狀態檔頂層為主裝置")
     check((payload["devices"] as? [[String: Any]])?.count == 2 && payload["primaryDeviceId"] as? String == A, "狀態檔裝置陣列")
-    check(StatusFile.payload(devices: [], states: [:], primaryID: nil, interval: 300, adapterStatus: "電腦藍牙已關閉")["status"] as? String == "電腦藍牙已關閉", "狀態檔藍牙狀態")
+    check(StatusFile.payload(devices: [], states: [:], primaryID: nil, displayedID: nil, interval: 300, adapterStatus: "電腦藍牙已關閉")["status"] as? String == "電腦藍牙已關閉", "狀態檔藍牙狀態")
+    var warm = r
+    warm.temperature = 26.0
+    let away = StatusFile.payload(devices: [DeviceRecord(id: A, name: "客廳", kind: .stock), DeviceRecord(id: B, name: "臥室", kind: .stock)],
+                                  states: [A: down, B: DeviceState().withReading(warm)], primaryID: A, displayedID: B,
+                                  interval: 300, adapterStatus: nil)
+    check(away["temperature"] as? Double == 26.0 && away["deviceName"] as? String == "臥室" && away["status"] as? String == DeviceState.statusOK,
+          "狀態檔頂層跟著狀態列顯示的那台")
+    check(away["primaryDeviceId"] as? String == A && away["displayedDeviceId"] as? String == B, "狀態檔主裝置與顯示裝置")
+}
+
+// MARK: - 換網路判斷 (只有預設閘道換了才重新偵測)
+do {
+    let home = NetworkSignature(gatewayIP: "192.168.1.1", gatewayMAC: "aa:aa:aa:aa:aa:aa")
+    let office = NetworkSignature(gatewayIP: "192.168.1.1", gatewayMAC: "bb:bb:bb:bb:bb:bb")
+    let none = NetworkSignature(gatewayIP: nil, gatewayMAC: nil)
+    let noMAC = NetworkSignature(gatewayIP: "192.168.1.1", gatewayMAC: nil)
+    check(NetworkSignature.isDifferentPlace(previous: home, current: office), "閘道硬體位址不同")
+    check(!NetworkSignature.isDifferentPlace(previous: home, current: NetworkSignature(gatewayIP: "192.168.50.1", gatewayMAC: "AA:AA:AA:AA:AA:AA")), "同一台路由器")
+    check(!NetworkSignature.isDifferentPlace(previous: home, current: noMAC), "沒有硬體位址時比對 IP")
+    check(NetworkSignature.isDifferentPlace(previous: home, current: NetworkSignature(gatewayIP: "10.0.0.1", gatewayMAC: nil)), "閘道 IP 不同")
+    check(!NetworkSignature.isDifferentPlace(previous: nil, current: home) && !NetworkSignature.isDifferentPlace(previous: home, current: none), "無法判斷視為沒換")
+
+    let t0 = Date(timeIntervalSince1970: 0)
+    var gate = ReprobeGate()
+    check(!gate.afterNetworkChange(home, now: t0) && gate.baseline == home, "第一次只記錄")
+    var fires = 0
+    for i in 1...18 {
+        if gate.afterNetworkChange(home, now: t0 + Double(i) * 510) { fires += 1 }
+    }
+    check(fires == 0, "同一個網路的假變動不重讀")
+    check(gate.afterNetworkChange(office, now: t0 + 10_000), "換網路重讀")
+    check(!gate.afterNetworkChange(home, now: t0 + 10_000 + ReprobeGate.networkGap - 1) && gate.baseline == home, "保底間隔內只更新記錄")
+    check(gate.afterNetworkChange(office, now: t0 + 10_000 + 2 * ReprobeGate.networkGap), "間隔後再換網路")
+
+    var g2 = ReprobeGate()
+    _ = g2.afterNetworkChange(home, now: t0)
+    check(!g2.afterNetworkChange(none, now: t0 + 1000) && g2.baseline == home, "斷線維持記錄")
+    check(!g2.afterNetworkChange(home, now: t0 + 2000), "重連同一個網路")
+    check(!g2.afterNetworkChange(noMAC, now: t0 + 3000) && g2.baseline == home, "硬體位址未查到時保留")
+    check(g2.afterNetworkChange(office, now: t0 + 4000), "同 IP 不同路由器")
+
+    var g3 = ReprobeGate()
+    _ = g3.afterNetworkChange(home, now: t0)
+    check(g3.afterWake(now: t0 + 5000), "喚醒重讀")
+    check(!g3.afterWake(now: t0 + 5000 + ReprobeGate.wakeGap - 1), "喚醒間隔")
+    check(g3.afterWake(now: t0 + 5000 + ReprobeGate.wakeGap), "喚醒間隔已過")
+    check(!g3.afterNetworkChange(office, now: t0 + 5068) && g3.baseline == office, "喚醒後換網路只更新記錄")
+    check(g3.afterNetworkChange(home, now: t0 + 5060 + 180), "喚醒幾分鐘後換網路照樣重讀")
+
+    // 保底間隔內又換網路：先記著，間隔到了補讀
+    var g4 = ReprobeGate()
+    _ = g4.afterNetworkChange(home, now: t0)
+    check(g4.afterNetworkChange(office, now: t0 + 1000) && g4.pendingDueAt == nil, "換網路重讀後沒有待補讀")
+    check(!g4.afterNetworkChange(home, now: t0 + 1100) && g4.pendingDueAt == t0 + 1000 + ReprobeGate.networkGap, "間隔內換網路記著")
+    check(!g4.afterPendingDue(now: t0 + 1000 + ReprobeGate.networkGap - 1), "還沒到補讀時間")
+    check(g4.afterPendingDue(now: t0 + 1000 + ReprobeGate.networkGap) && g4.pendingDueAt == nil, "間隔到補讀")
+    check(!g4.afterPendingDue(now: t0 + 9000), "補讀過不再讀")
+    _ = g4.afterNetworkChange(office, now: t0 + 1700)
+    check(g4.pendingDueAt != nil && g4.afterWake(now: t0 + 1800) && g4.pendingDueAt == nil, "喚醒取消待補讀")
+
+    // route、arp 輸出解析 (macOS 格式)
+    let route = """
+       route to: default
+    destination: default
+           mask: default
+        gateway: 192.168.2.1
+      interface: en0
+          flags: <UP,GATEWAY,DONE,STATIC,PRSCOPED>
+    """
+    let parsed = NetworkSignature.parseRoute(route)
+    check(parsed.gateway == "192.168.2.1" && parsed.interface == "en0", "解析預設路由")
+    check(NetworkSignature.parseRoute("route: writing to routing socket: not in table").gateway == nil, "沒有預設路由")
+    check(NetworkSignature.parseARP("? (192.168.2.1) at 0:11:22:aa:BB:cc on en0 ifscope [ethernet]") == "0:11:22:aa:bb:cc", "解析閘道硬體位址")
+    check(NetworkSignature.parseARP("? (192.168.2.1) at (incomplete) on en0 ifscope [ethernet]") == nil, "硬體位址尚未查到")
+    check(NetworkSignature.parseARP("192.168.2.1 (192.168.2.1) -- no entry") == nil, "沒有硬體位址紀錄")
+    check(NetworkSignature.isVirtualInterface("utun4") && NetworkSignature.isVirtualInterface("ipsec0") && !NetworkSignature.isVirtualInterface("en0"), "VPN 虛擬介面")
 }
 
 try? FileManager.default.removeItem(at: testRoot)
