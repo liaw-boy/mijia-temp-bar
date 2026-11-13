@@ -69,6 +69,7 @@ enum LoginItemManager {
         }
         do {
             if #available(macOS 13.0, *) {
+                try? setLaunchAgent(false)  // 從 macOS 12 升級上來時留下的舊設定檔，避免重複啟動
                 if enabled {
                     try SMAppService.mainApp.register()
                 } else {

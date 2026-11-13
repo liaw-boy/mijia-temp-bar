@@ -103,7 +103,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
             UNUserNotificationCenter.current().add(request) { error in
                 if let error = error {
                     mijiaLog("[Notification] UNUserNotificationCenter 發送失敗: \(error.localizedDescription)，改用系統備用通知方案")
-                    self.fallbackNotify(title: title, body: body)
+                    DispatchQueue.main.async { self.fallbackNotify(title: title, body: body) }
                 }
             }
         } else {

@@ -26,14 +26,15 @@ enum Migration {
     static func run(store: KeyValueStore, deviceStore: DeviceStore, logFile: URL) throws -> Bool {
         let legacy = deviceStore.legacyHistory
         let hasHistory = FileManager.default.fileExists(atPath: legacy.path)
-        guard let plan = plan(devicesKeyPresent: store.object(forKey: DeviceKeys.devices) != nil,
+        let pending = store.object(forKey: DeviceKeys.migrationPending) as? Bool == true
+        guard let plan = plan(devicesKeyPresent: store.object(forKey: DeviceKeys.devices) != nil && !pending,
                               legacyTarget: store.object(forKey: DeviceKeys.legacyTarget),
                               legacyHistoryExists: hasHistory) else { return false }
 
         if let target = plan.primaryID {
             let dest = deviceStore.historyURL(for: target)
-            if let id = plan.copyHistoryTo, try FileOps.copyWithoutOverwrite(from: legacy, to: dest) {
-                mijiaLog("遷移: 舊歷史已複製到 \(id)")
+            if let id = plan.copyHistoryTo {
+                try copyLegacyHistory(legacy, to: dest, id: id, store: store)
             }
             backfillIfEmpty(dest, logFile: logFile)
             migrateLowBatteryDate(store: store, deviceID: target)
@@ -41,12 +42,28 @@ enum Migration {
         if plan.legacyUnclaimed {
             store.set(true, forKey: DeviceKeys.legacyUnclaimed)
         }
-        store.set(plan.primaryID, forKey: DeviceKeys.primary)
+        // 遷移中途失敗期間使用者可能已加入其他裝置：舊的那台排第一，其餘保留
+        let devices = DeviceList.add(plan.devices, DeviceList.parse(store.object(forKey: DeviceKeys.devices)))
+        let primary = DeviceList.resolvePrimary(devices, store.object(forKey: DeviceKeys.primary) as? String ?? plan.primaryID)
+        store.set(primary, forKey: DeviceKeys.primary)
         // Devices 最後寫入，作為遷移完成的記號
-        store.set(DeviceList.serialize(plan.devices), forKey: DeviceKeys.devices)
+        store.set(DeviceList.serialize(devices), forKey: DeviceKeys.devices)
+        if pending { store.set(false, forKey: DeviceKeys.migrationPending) }
         deviceStore.reload()
-        mijiaLog("遷移完成: \(plan.devices.count) 台裝置，主裝置 \(plan.primaryID ?? "無")")
+        mijiaLog("遷移完成: \(devices.count) 台裝置，主裝置 \(primary ?? "無")")
         return true
+    }
+
+    /// 複製失敗時標記遷移未完成並丟出，下次啟動會再試 (即使在那之前加入了其他裝置)
+    private static func copyLegacyHistory(_ legacy: URL, to dest: URL, id: String, store: KeyValueStore) throws {
+        do {
+            if try FileOps.copyWithoutOverwrite(from: legacy, to: dest) {
+                mijiaLog("遷移: 舊歷史已複製到 \(id)")
+            }
+        } catch {
+            store.set(true, forKey: DeviceKeys.migrationPending)
+            throw error
+        }
     }
 
     private static func migrateLowBatteryDate(store: KeyValueStore, deviceID: String) {

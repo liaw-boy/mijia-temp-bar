@@ -63,8 +63,10 @@ enum DeviceList {
         for item in items {
             guard let dict = item as? [String: Any], let rawID = dict["id"] as? String,
                   let kindRaw = dict["kind"] as? String, let kind = DeviceKind(rawValue: kindRaw) else { continue }
-            let id = normalizeID(rawID)
-            guard !id.isEmpty, !result.contains(where: { $0.id == id }) else { continue }
+            // Mac 的裝置 id 是 CBPeripheral.identifier；不是 UUID 的 (手動改壞的設定) 直接丟棄
+            guard let uuid = UUID(uuidString: rawID.trimmingCharacters(in: .whitespacesAndNewlines)) else { continue }
+            let id = uuid.uuidString
+            guard !result.contains(where: { $0.id == id }) else { continue }
             let name = (try? cleanName(dict["name"] as? String ?? "")) ?? defaultName(existing: result)
             result.append(DeviceRecord(id: id, name: name, kind: kind))
         }
@@ -117,6 +119,7 @@ enum DeviceKeys {
     static let legacyUnclaimed = "LegacyHistoryUnclaimed"
     static let legacyLowBattery = "LastLowBatteryNotificationDate"
     static let lowBatteryDates = "LowBatteryAlertDates"
+    static let migrationPending = "MigrationPending"  // 上次遷移中途失敗；之後即使已有 Devices 也要再做一次
 }
 
 /// 裝置清單與主裝置的保存。只在主執行緒使用。

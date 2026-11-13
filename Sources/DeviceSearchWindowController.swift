@@ -12,8 +12,6 @@ final class DeviceSearchWindowController: NSWindowController, NSWindowDelegate {
     private let stack = NSStackView()
     private var progress: NSProgressIndicator?
     private var countLabel: NSTextField?
-    private var progressTimer: Timer?
-    private var startedAt = Date()
     private var checks: [(NSButton, DiscoveredDevice)] = []
 
     init(duration: TimeInterval, existingIDs: @escaping () -> Set<String>) {
@@ -58,9 +56,9 @@ final class DeviceSearchWindowController: NSWindowController, NSWindowDelegate {
         let bar = NSProgressIndicator()
         bar.isIndeterminate = false
         bar.minValue = 0
-        bar.maxValue = duration
+        bar.maxValue = 1
         bar.widthAnchor.constraint(equalToConstant: 480).isActive = true
-        let count = NSTextField(labelWithString: "請讓溫濕度計靠近這台電腦。")
+        let count = NSTextField(labelWithString: "請讓溫濕度計靠近這台電腦 (藍牙就緒後才開始計時)。")
         count.textColor = .secondaryLabelColor
         progress = bar
         countLabel = count
@@ -68,29 +66,19 @@ final class DeviceSearchWindowController: NSWindowController, NSWindowDelegate {
         stack.addArrangedSubview(bar)
         stack.addArrangedSubview(count)
         stack.addArrangedSubview(buttonRow([button("取消", #selector(handleClose))]))
-
-        startedAt = Date()
-        progressTimer?.invalidate()
-        let t = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-            self.progress?.doubleValue = min(self.duration, Date().timeIntervalSince(self.startedAt))
-        }
-        RunLoop.main.add(t, forMode: .common)
-        progressTimer = t
         present()
     }
 
-    /// 掃描中的進度回報
-    func update(_ found: [DiscoveredDevice]) {
+    /// 掃描中的進度回報 (progress 0~1，藍牙就緒後才會前進)
+    func update(_ found: [DiscoveredDevice], progress value: Double) {
         let n = DeviceDiscovery.newCandidates(found, existingIDs: existingIDs()).count
+        progress?.doubleValue = value
         countLabel?.stringValue = "已找到 \(n) 台尚未加入的溫濕度計"
     }
 
     // MARK: - 階段二：勾選清單
 
     func finish(_ found: [DiscoveredDevice]) {
-        progressTimer?.invalidate()
-        progressTimer = nil
         clear()
         let fresh = DeviceDiscovery.newCandidates(found, existingIDs: existingIDs())
         if fresh.isEmpty {
@@ -118,8 +106,9 @@ final class DeviceSearchWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func handleAdd() {
         let chosen = checks.filter { $0.0.state == .on }.map(\.1)
+        let add = onAdd  // close() 會觸發 onClose，控制器可能隨之被釋放
         close()
-        if !chosen.isEmpty { onAdd?(chosen) }
+        if !chosen.isEmpty { add?(chosen) }
     }
 
     @objc private func handleRetry() {
@@ -131,8 +120,6 @@ final class DeviceSearchWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
-        progressTimer?.invalidate()
-        progressTimer = nil
         onClose?()
     }
 

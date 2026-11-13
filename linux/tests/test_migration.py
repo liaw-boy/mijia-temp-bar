@@ -143,6 +143,23 @@ class DeviceStoreMigrationTests(unittest.TestCase):
         self.assertTrue(store.migrate())
         self.assertEqual((self.history_dir / "A4C1388C9B32.json").read_text(encoding="utf-8"), "[2]")
 
+    def test_failed_copy_is_retried_even_after_adding_devices(self):
+        self.legacy_history.write_text("[5]", encoding="utf-8")
+        store = self.make_store({"TargetAddress": A})
+        with mock.patch("mijia_temp_bar.devices.copy_without_overwrite", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                store.migrate()
+        self.assertTrue(self.settings.data["MigrationPending"])
+        self.assertNotIn("Devices", self.settings.data)
+
+        store.add([Device(B, "臥室", KIND_BROADCAST)])
+        self.assertTrue(store.migrate())
+        self.assertEqual([d.id for d in store.devices], [A, B])
+        self.assertEqual(store.primary_id, B)  # 使用者在這段期間的主裝置選擇保留
+        self.assertFalse(self.settings.data["MigrationPending"])
+        self.assertEqual((self.history_dir / "A4C1388C9B32.json").read_text(encoding="utf-8"), "[5]")
+        self.assertFalse(store.migrate())
+
     def test_unclaimed_history_goes_to_first_added_device(self):
         self.legacy_history.write_text("[9]", encoding="utf-8")
         store = self.make_store({})

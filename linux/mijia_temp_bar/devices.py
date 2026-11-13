@@ -27,6 +27,7 @@ LEGACY_TARGET_KEY = "TargetAddress"
 LEGACY_UNCLAIMED_KEY = "LegacyHistoryUnclaimed"
 LEGACY_LOW_BATTERY_KEY = "LastLowBatteryNotificationTime"
 LOW_BATTERY_TIMES_KEY = "LowBatteryAlertTimes"
+MIGRATION_PENDING_KEY = "MigrationPending"  # 上次遷移中途失敗；之後即使已有 Devices 也要再做一次
 SETTINGS_BACKUP_NAME = "settings.pre-multidevice.json"
 
 _MISSING = object()
@@ -241,8 +242,9 @@ class DeviceStore:
 
     def migrate(self) -> bool:
         """把舊版單一裝置設定轉成裝置清單；回傳是否執行了遷移。"""
+        pending = self._store.get(MIGRATION_PENDING_KEY) is True
         plan = plan_migration(
-            self._store.get(DEVICES_KEY, _MISSING) is not _MISSING,
+            self._store.get(DEVICES_KEY, _MISSING) is not _MISSING and not pending,
             self._store.get(LEGACY_TARGET_KEY),
             self._legacy_history.is_file(),
         )
@@ -250,18 +252,31 @@ class DeviceStore:
             return False
         self._backup_settings()
         if plan.copy_history_to is not None:
-            # 複製失敗 (I/O 錯誤) 時直接丟出，不寫 Devices，下次啟動會再試
-            copied = copy_without_overwrite(self._legacy_history, self.history_path(plan.copy_history_to))
-            mijia_log(f"遷移: 舊歷史{'已複製' if copied else '未複製 (目的地已存在)'}到 {plan.copy_history_to}")
+            self._copy_legacy_history(plan.copy_history_to)
         self._migrate_low_battery_time(plan.primary_id)
         if plan.legacy_unclaimed:
             self._store.set(LEGACY_UNCLAIMED_KEY, True)
-        self._store.set(PRIMARY_KEY, plan.primary_id)
+        # 遷移中途失敗期間使用者可能已加入其他裝置：舊的那台排第一，其餘保留
+        devices = add_devices(plan.devices, parse_devices(self._store.get(DEVICES_KEY)))
+        saved_primary = self._store.get(PRIMARY_KEY)
+        primary = resolve_primary(devices, saved_primary if isinstance(saved_primary, str) else plan.primary_id)
+        self._store.set(PRIMARY_KEY, primary)
         # Devices 最後寫入，作為遷移完成的記號
-        self._store.set(DEVICES_KEY, serialize_devices(plan.devices))
+        self._store.set(DEVICES_KEY, serialize_devices(devices))
+        if pending:
+            self._store.set(MIGRATION_PENDING_KEY, False)
         self._reload()
-        mijia_log(f"遷移完成: {len(plan.devices)} 台裝置，主裝置 {plan.primary_id}")
+        mijia_log(f"遷移完成: {len(devices)} 台裝置，主裝置 {primary}")
         return True
+
+    def _copy_legacy_history(self, device_id: str) -> None:
+        """複製失敗 (I/O 錯誤) 時標記遷移未完成並丟出，下次啟動會再試 (即使在那之前加入了其他裝置)。"""
+        try:
+            copied = copy_without_overwrite(self._legacy_history, self.history_path(device_id))
+        except OSError:
+            self._store.set(MIGRATION_PENDING_KEY, True)
+            raise
+        mijia_log(f"遷移: 舊歷史{'已複製' if copied else '未複製 (目的地已存在)'}到 {device_id}")
 
     def _backup_settings(self) -> None:
         if self._settings_path is None:

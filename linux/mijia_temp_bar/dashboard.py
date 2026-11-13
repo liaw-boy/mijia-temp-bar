@@ -273,6 +273,8 @@ class DashboardWindow(Gtk.Window):
         state = self.controller.state_for(self.selected_id)
         device = next((d for d in self.controller.devices if d.id == self.selected_id), None)
         self.model_badge.set_text("LYWSD03MMC" if device is None or device.kind == KIND_STOCK else "開源廣播")
+        # 開源廣播裝置本來就持續更新，沒有「立即更新」
+        self.refresh_button.set_sensitive(device is not None and device.kind == KIND_STOCK)
         if state.reading is not None:
             self._show_reading(state.reading)
         else:
@@ -312,9 +314,9 @@ class DashboardWindow(Gtk.Window):
             group = button
         chart_header.pack_start(segments, False, False, 0)
 
-        refresh_button = Gtk.Button(label="立即更新")
-        refresh_button.connect("clicked", lambda _b: self.controller.refresh_now(self.selected_id))
-        chart_header.pack_end(refresh_button, False, False, 0)
+        self.refresh_button = Gtk.Button(label="立即更新")
+        self.refresh_button.connect("clicked", lambda _b: self.controller.refresh_now(self.selected_id))
+        chart_header.pack_end(self.refresh_button, False, False, 0)
         export_button = Gtk.Button(label="匯出 CSV")
         export_button.connect("clicked", self._handle_export_csv)
         chart_header.pack_end(export_button, False, False, 0)

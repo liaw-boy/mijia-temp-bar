@@ -24,15 +24,19 @@ enum StatusItemRenderer {
             button.image = makeStackedImage(temp: "\(t)°", hum: "\(h)%")
             button.imagePosition = .imageOnly
         case .horizontal:
-            button.image = nil
-            button.title = "🌡️ \(t)°C  💧 \(h)%"
+            showText("🌡️ \(t)°C  💧 \(h)%", on: button)
         case .tempOnly:
-            button.image = nil
-            button.title = "🌡️ \(t)°C"
+            showText("🌡️ \(t)°C", on: button)
         case .compact:
-            button.image = nil
-            button.title = "\(t)° \(h)%"
+            showText("\(t)° \(h)%", on: button)
         }
+    }
+
+    /// 純文字顯示：一併把 imagePosition 改回來 (雙行樣式設成 imageOnly 後文字會被藏起來)
+    static func showText(_ text: String, on button: NSStatusBarButton) {
+        button.image = nil
+        button.imagePosition = .noImage
+        button.title = text
     }
 
     /// 產生 [TMP] / [HUM] 雙行微型膠囊影像 (上下完全貼滿 24pt 版)

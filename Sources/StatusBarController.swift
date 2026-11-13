@@ -180,15 +180,13 @@ final class StatusBarController: NSObject {
     private func updateTitle() {
         guard let button = statusItem.button else { return }
         guard let primary = deviceStore.primary else {
-            button.image = nil
-            button.title = "🌡️ 尚未加入裝置"
+            StatusItemRenderer.showText("🌡️ 尚未加入裝置", on: button)
             button.toolTip = "尚未加入裝置：點一下搜尋新裝置"
             return
         }
         let state = states[primary.id] ?? DeviceState()
         if state.reading == nil && state.reachable != false {
-            button.image = nil
-            button.title = "🌡️ \(adapterStatus ?? state.status)"
+            StatusItemRenderer.showText("🌡️ \(adapterStatus ?? state.status)", on: button)
             button.toolTip = primary.name
             return
         }
@@ -252,9 +250,9 @@ final class StatusBarController: NSObject {
         guard let window = searchWindow else { return }
         window.showSearching()
         bluetoothManager.startDiscovery(
-            onUpdate: { [weak self, weak window] found in
+            onUpdate: { [weak self, weak window] found, progress in
                 guard let w = window, self?.searchWindow === w else { return }
-                w.update(found)
+                w.update(found, progress: progress)
             },
             onFinish: { [weak self, weak window] found in
                 guard let w = window, self?.searchWindow === w else { return }
@@ -295,10 +293,6 @@ extension StatusBarController: DeviceCoordinator {
 
     func refresh(_ id: String?) {
         temporarilyShowStatusItem()
-        for d in deviceStore.devices where d.kind == .stock && (id == nil || d.id == id) {
-            states[d.id] = state(for: d.id).withStatus("正在連線重新整理...", reachable: nil)
-            dashboardController?.deviceStateChanged(d.id)
-        }
         bluetoothManager.refresh(deviceID: id)
     }
 
@@ -324,6 +318,7 @@ extension StatusBarController: DeviceCoordinator {
         UserDefaults.standard.set(true, forKey: Self.discoveryPromptedKey)
         popover.performClose(nil)
         if let existing = searchWindow {
+            NSApp.activate(ignoringOtherApps: true)
             existing.window?.makeKeyAndOrderFront(nil)
             return
         }

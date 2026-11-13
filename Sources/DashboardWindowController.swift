@@ -372,6 +372,7 @@ final class DashboardWindowController: NSWindowController {
     func applySelectedState() {
         let device = coordinator?.devices.first { $0.id == selectedDeviceID }
         modelBadgeLabel.stringValue = device?.kind == .broadcast ? "開源廣播" : "LYWSD03MMC"
+        refreshButton.isEnabled = device?.kind == .stock  // 開源廣播裝置本來就持續更新
         let state = selectedDeviceID.flatMap { coordinator?.state(for: $0) } ?? DeviceState()
         if let r = state.reading {
             showReading(r)

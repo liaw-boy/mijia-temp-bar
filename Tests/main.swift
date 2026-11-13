@@ -129,6 +129,19 @@ do {
     try? ds2.rename(A, to: "書房")
     check(ds2.device(A)?.name == "書房", "改名")
 
+    // 複製失敗 (歷史目錄位置被一般檔案佔住) → 標記未完成；之後加了別台裝置也會補做遷移
+    let blocked = dir.appendingPathComponent("blocked")
+    try! Data("x".utf8).write(to: blocked)
+    let s3 = MemoryStore([DeviceKeys.legacyTarget: A])
+    let ds3 = DeviceStore(store: s3, historyDir: blocked, legacyHistory: legacy)
+    check((try? Migration.run(store: s3, deviceStore: ds3, logFile: AppPaths.logFile)) == nil, "複製失敗時丟出錯誤")
+    check(s3.data[DeviceKeys.migrationPending] as? Bool == true && s3.data[DeviceKeys.devices] == nil, "標記遷移未完成")
+    ds3.add([DeviceRecord(id: B, name: "臥室", kind: .broadcast)])
+    try! FileManager.default.removeItem(at: blocked)
+    check((try? Migration.run(store: s3, deviceStore: ds3, logFile: AppPaths.logFile)) == true, "下次啟動補做遷移")
+    check(ds3.devices.map(\.id) == [A, B] && ds3.primaryID == B, "補做時保留期間加入的裝置與主裝置")
+    check(s3.data[DeviceKeys.migrationPending] as? Bool == false, "清除未完成標記")
+
     let log = "[2026-11-13T15:45:31Z] 收到原廠數據: 溫度=20.85°C, 濕度=21.0%, 電壓=2.789V, 電量=76%\n" +
               "[2026-11-13T15:50:31Z] 收到原廠數據: 溫度=21.0°C, 濕度=22.0%, 電壓=2.8V, 電量=77% [\(A)]\n雜訊行"
     let pts = Migration.parseLogPoints(log)

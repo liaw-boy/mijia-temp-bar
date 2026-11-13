@@ -18,6 +18,7 @@ final class BluetoothManager: NSObject {
     private var centralManager: CBCentralManager!
     private(set) var refreshInterval: TimeInterval = 300.0
     private(set) var isSuspended = false
+    private var suspendReason = ""
 
     // 原廠韌體 UUID 定義
     private let serviceUUID = CBUUID(string: "EBE0CCB0-7A0A-4B0C-8A1A-6FF2997DA3A6")
@@ -32,9 +33,10 @@ final class BluetoothManager: NSObject {
     private enum ScanReason { case discovery, rediscover }
     private struct Discovery {
         var found: [String: DiscoveredDevice] = [:]
-        let deadline: Date
+        var remaining: TimeInterval
+        let duration: TimeInterval
         let timer: Timer
-        let onUpdate: ([DiscoveredDevice]) -> Void
+        let onUpdate: ([DiscoveredDevice], Double) -> Void
         let onFinish: ([DiscoveredDevice]) -> Void
     }
 
@@ -115,6 +117,7 @@ final class BluetoothManager: NSObject {
     func suspend(reason: String = "已離開居家大範圍") {
         guard !isSuspended else { return }
         isSuspended = true
+        suspendReason = reason
         if let a = attempt {
             finishAttempt(a.id, token: a.token, outcome: .cancelled)
         }
@@ -136,19 +139,24 @@ final class BluetoothManager: NSObject {
             broadcasts[id]?.lastSeen = now
         }
         mijiaLog("【大範圍地理圍欄】已回到居家範圍，自動喚醒並發起連線...")
-        delegate?.didUpdateAdapterStatus("已進入居家範圍，連線中...", available: true)
+        if centralManager.state == .poweredOn {
+            delegate?.didUpdateAdapterStatus("已進入居家範圍，連線中...", available: true)
+        } else {
+            centralManagerDidUpdateState(centralManager)  // 藍牙仍未就緒：維持顯示藍牙的狀態
+        }
         updateScanning()
         scheduleTick(after: 0)
     }
 
     // MARK: - 搜尋新裝置
 
-    func startDiscovery(duration: TimeInterval = 20, onUpdate: @escaping ([DiscoveredDevice]) -> Void,
+    /// onUpdate 每秒回報 (目前找到的候選, 進度 0~1)；藍牙還沒就緒時不倒數
+    func startDiscovery(duration: TimeInterval = 20, onUpdate: @escaping ([DiscoveredDevice], Double) -> Void,
                         onFinish: @escaping ([DiscoveredDevice]) -> Void) {
         guard discovery == nil else { return }
         let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.discoveryTick() }
         RunLoop.main.add(timer, forMode: .common)
-        discovery = Discovery(deadline: Date().addingTimeInterval(duration), timer: timer, onUpdate: onUpdate, onFinish: onFinish)
+        discovery = Discovery(remaining: duration, duration: duration, timer: timer, onUpdate: onUpdate, onFinish: onFinish)
         scanReasons.insert(.discovery)
         updateScanning()
         mijiaLog("開始搜尋新裝置...")
@@ -160,11 +168,13 @@ final class BluetoothManager: NSObject {
     }
 
     private func discoveryTick() {
-        guard let d = discovery else { return }
-        if Date() >= d.deadline {
+        guard var d = discovery else { return }
+        if isScanning { d.remaining -= 1 }
+        discovery = d
+        if d.remaining <= 0 {
             finishDiscovery(notify: true)
         } else {
-            d.onUpdate(Array(d.found.values))
+            d.onUpdate(Array(d.found.values), 1 - d.remaining / d.duration)
         }
     }
 
@@ -207,6 +217,7 @@ final class BluetoothManager: NSObject {
     private func beginAttempt(_ id: String) {
         guard let uuid = UUID(uuidString: id) else {
             runtimes[id]?.due = .distantFuture
+            scheduleTick(after: 0)
             return
         }
         attemptCounter += 1
@@ -268,7 +279,8 @@ final class BluetoothManager: NSObject {
         delegate?.didUpdateReading(reading, deviceID: id)
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
-        delegate?.didUpdateDeviceStatus("省電休眠中 (下次更新 \(formatter.string(from: rt.due)))", deviceID: id, reachable: true)
+        let status = isSuspended ? "離家停機中 (已手動讀取一次)" : "省電休眠中 (下次更新 \(formatter.string(from: rt.due)))"
+        delegate?.didUpdateDeviceStatus(status, deviceID: id, reachable: true)
     }
 
     private func recordFailure(_ id: String, _ message: String, timeout: Bool) {
@@ -342,7 +354,11 @@ extension BluetoothManager: CBCentralManagerDelegate {
         }
         switch central.state {
         case .poweredOn:
-            if !isSuspended { delegate?.didUpdateAdapterStatus("藍牙已就緒", available: true) }
+            if isSuspended {
+                delegate?.didUpdateAdapterStatus("\(suspendReason) · 休眠停機", available: false)
+            } else {
+                delegate?.didUpdateAdapterStatus("藍牙已就緒", available: true)
+            }
             retrieveKnownPeripherals()
             updateScanning()
             scheduleTick(after: 0)
@@ -371,6 +387,8 @@ extension BluetoothManager: CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
         let id = peripheral.identifier.uuidString
+        let locating = attempt.map { $0.id == id && $0.phase == .locating } ?? false
+        guard discovery != nil || broadcasts[id] != nil || locating else { return }
         let name = peripheral.name ?? (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? ""
         let raw = advertisementData[CBAdvertisementDataServiceDataKey] as? [CBUUID: Data] ?? [:]
         // 廣播內容來自附近任何裝置，不可信：重複的鍵只取第一筆 (uniqueKeysWithValues 遇到重複會讓程式崩潰)
@@ -393,7 +411,7 @@ extension BluetoothManager: CBCentralManagerDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        guard var a = attempt, a.id == peripheral.identifier.uuidString else { return }
+        guard var a = attempt, a.id == peripheral.identifier.uuidString, a.phase == .connecting else { return }
         a.phase = .connected
         attempt = a
         mijiaLog("已連線至 \(devices[a.id]?.name ?? "設備") [\(a.id)]，正在探索溫濕度服務...")
@@ -419,12 +437,19 @@ extension BluetoothManager: CBCentralManagerDelegate {
 
 // MARK: - CBPeripheralDelegate (原廠韌體 GATT 解析)
 extension BluetoothManager: CBPeripheralDelegate {
+    /// 目前這次連線且已連上 (逾時後才到的舊回呼不算)
+    private func currentConnected(_ peripheral: CBPeripheral) -> Attempt? {
+        guard let a = attempt, a.id == peripheral.identifier.uuidString, a.phase == .connected else { return nil }
+        return a
+    }
+
     private func failCurrent(_ peripheral: CBPeripheral, _ message: String) {
-        guard let a = attempt, a.id == peripheral.identifier.uuidString else { return }
+        guard let a = currentConnected(peripheral) else { return }
         finishAttempt(a.id, token: a.token, outcome: .failure(message, timeout: false))
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        guard currentConnected(peripheral) != nil else { return }
         guard let service = peripheral.services?.first(where: { $0.uuid == serviceUUID }) else {
             failCurrent(peripheral, "找不到溫濕度服務: \(error?.localizedDescription ?? "無此服務")")
             return
@@ -433,6 +458,7 @@ extension BluetoothManager: CBPeripheralDelegate {
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
+        guard currentConnected(peripheral) != nil else { return }
         guard let char = service.characteristics?.first(where: { $0.uuid == charUUID }) else {
             failCurrent(peripheral, "找不到溫濕度特徵值: \(error?.localizedDescription ?? "無此特徵值")")
             return
@@ -443,7 +469,7 @@ extension BluetoothManager: CBPeripheralDelegate {
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
-        guard characteristic.uuid == charUUID, let a = attempt, a.id == peripheral.identifier.uuidString else { return }
+        guard characteristic.uuid == charUUID, let a = currentConnected(peripheral) else { return }
         guard error == nil, let data = characteristic.value, let m = AdvertisementParser.parseStockGATT(data) else {
             failCurrent(peripheral, "讀取失敗: \(error?.localizedDescription ?? "數據長度不足")")
             return
