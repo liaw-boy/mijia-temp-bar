@@ -1,47 +1,34 @@
 import AppKit
 import CoreWLAN
 
-enum DisplayStyle: Int {
-    case statsBadge = 0 // 雙行微型膠囊風格 (TMP / HUM 雙行對齊)
-    case stacked = 1    // 純數字雙行堆疊 (26.1° / 63%)
-    case horizontal = 2 // 橫向完整 (🌡️ 26.1°C  💧 65%)
-    case tempOnly = 3   // 僅溫度 (🌡️ 26.1°C)
-    case compact = 4    // 緊湊單行 (26.1° 65%)
-}
-
+/// 狀態列圖示、彈出式儀表板與多裝置狀態的協調者。
+/// 狀態列只顯示「主裝置」；每台裝置的讀數、狀態、歷史與通知各自獨立。
 final class StatusBarController: NSObject {
+    private static let discoveryPromptedKey = "DiscoveryPromptShown"
+
     private var statusItem: NSStatusItem!
     private var bluetoothManager: BluetoothManager!
+    private let deviceStore: DeviceStore
+    private var states: [String: DeviceState] = [:]
     private var displayStyle: DisplayStyle = .statsBadge
-
-    // 「僅連線時顯示」功能開關
-    private var hideWhenDisconnected: Bool = true
-    private var isConnected: Bool = false
-    private var tempShowTimer: Timer?
+    private var hideWhenDisconnected: Bool = true  // 「僅連線時顯示」：全部裝置都連不到才隱藏
+    private var adapterStatus: String?
+    private var adapterHint: String?
+    private var forceVisibleTimer: Timer?
+    private var statusWriteTimer: Timer?
+    private var lastStatusWrite = Date.distantPast
 
     private let popover = NSPopover()
     private var outsideClickMonitor: Any?
     private var dashboardController: DashboardWindowController?
-    private var latestReading: SensorReading?
+    private var searchWindow: DeviceSearchWindowController?
 
-    override init() {
+    init(deviceStore: DeviceStore) {
+        self.deviceStore = deviceStore
         super.init()
-
-        // 讀取偏好設定
-        if UserDefaults.standard.object(forKey: "HideWhenDisconnected") != nil {
-            hideWhenDisconnected = UserDefaults.standard.bool(forKey: "HideWhenDisconnected")
-        } else {
-            hideWhenDisconnected = true
-            UserDefaults.standard.set(true, forKey: "HideWhenDisconnected")
-        }
-
-        if let savedStyle = UserDefaults.standard.object(forKey: "DisplayStyle") as? Int,
-           let style = DisplayStyle(rawValue: savedStyle) {
-            displayStyle = style
-        } else {
-            displayStyle = .statsBadge
-            UserDefaults.standard.set(DisplayStyle.statsBadge.rawValue, forKey: "DisplayStyle")
-        }
+        loadPreferences()
+        // 啟動時先用每台最後一筆歷史當快取 (避免圖示閃爍或意外消失)
+        for d in deviceStore.devices { states[d.id] = cachedState(for: d) }
 
         setupStatusItem()
         setupPopover()
@@ -53,37 +40,8 @@ final class StatusBarController: NSObject {
         LocationGatekeeper.shared.delegate = self
         LocationGatekeeper.shared.checkCurrentStatus()
 
-        // 啟動時立刻恢復最近一次讀取的數據 (避免圖示閃爍或意外消失)
-        if let last = HistoryManager.shared.points.last {
-            isConnected = true
-            statusItem.isVisible = true
-            let cachedReading = SensorReading(
-                temperature: last.temperature,
-                humidity: last.humidity,
-                batteryPercent: last.batteryPercent,
-                voltage: last.voltage,
-                rssi: nil,
-                deviceName: "LYWSD03MMC",
-                lastUpdated: last.timestamp,
-                mode: "原廠直連 (秒讀休眠)"
-            )
-            latestReading = cachedReading
-            updateTitle()
-            dashboardController?.updateReading(cachedReading)
-        } else if hideWhenDisconnected {
-            // 首次全新安裝無快取數據時，若超過 45 秒未連線才依設定隱藏
-            tempShowTimer = Timer.scheduledTimer(withTimeInterval: 45.0, repeats: false) { [weak self] _ in
-                guard let self = self else { return }
-                if !self.isConnected {
-                    self.statusItem.isVisible = false
-                    mijiaLog("尚未連線，依設定自動隱藏狀態列圖示")
-                }
-            }
-        }
-
-        if LocationGatekeeper.shared.isInHomeArea {
-            bluetoothManager.startScan()
-        }
+        refreshTray()
+        bluetoothManager.setDevices(deviceStore.devices, order: deviceStore.orderedIDs)
 
         // 啟動後稍等再檢查新版本，避免與藍牙初始化搶資源
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
@@ -91,6 +49,37 @@ final class StatusBarController: NSObject {
                 self?.dashboardController?.showUpdateStatus(status)
             }
         }
+        // 全新安裝 (沒有任何裝置) 時自動開啟搜尋視窗，只跳一次
+        if deviceStore.devices.isEmpty && !UserDefaults.standard.bool(forKey: Self.discoveryPromptedKey) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                guard let self = self, self.deviceStore.devices.isEmpty else { return }
+                mijiaLog("尚未加入任何裝置，自動開啟搜尋視窗")
+                self.openDeviceSearch()
+            }
+        }
+    }
+
+    private func loadPreferences() {
+        if UserDefaults.standard.object(forKey: "HideWhenDisconnected") != nil {
+            hideWhenDisconnected = UserDefaults.standard.bool(forKey: "HideWhenDisconnected")
+        } else {
+            UserDefaults.standard.set(true, forKey: "HideWhenDisconnected")
+        }
+        if let saved = UserDefaults.standard.object(forKey: "DisplayStyle") as? Int, let style = DisplayStyle(rawValue: saved) {
+            displayStyle = style
+        } else {
+            UserDefaults.standard.set(DisplayStyle.statsBadge.rawValue, forKey: "DisplayStyle")
+        }
+    }
+
+    private func cachedState(for device: DeviceRecord) -> DeviceState {
+        guard let last = HistoryManager.forDevice(device.id).lastPoint else { return DeviceState() }
+        let reading = SensorReading(temperature: last.temperature, humidity: last.humidity,
+                                    batteryPercent: last.batteryPercent, voltage: last.voltage, rssi: nil,
+                                    deviceName: device.name, lastUpdated: last.timestamp,
+                                    mode: device.kind == .stock ? AdvertisementParser.modeStock : "開源廣播",
+                                    isBroadcast: device.kind == .broadcast)
+        return DeviceState(reading: reading, reachable: nil, status: "使用上次紀錄", cached: true)
     }
 
     private func setupStatusItem() {
@@ -98,7 +87,7 @@ final class StatusBarController: NSObject {
         statusItem.isVisible = true
         if let button = statusItem.button {
             button.title = "🌡️ 搜尋中..."
-            button.toolTip = "米家藍牙溫濕度計 2"
+            button.toolTip = "米家藍牙溫濕度計"
             button.target = self
             button.action = #selector(handleStatusButtonClick)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -108,9 +97,8 @@ final class StatusBarController: NSObject {
     private func setupPopover() {
         let dashboard = DashboardWindowController.shared
         dashboardController = dashboard
-        dashboard.onRefreshRequested = { [weak self] in
-            self?.handleRefresh()
-        }
+        dashboard.coordinator = self
+        dashboard.onRefreshRequested = { [weak self] id in self?.refresh(id) }
         dashboard.onIntervalChanged = { [weak self] sec in
             self?.bluetoothManager.setRefreshInterval(sec)
         }
@@ -120,14 +108,12 @@ final class StatusBarController: NSObject {
             self?.updateTitle()
         }
         dashboard.onHideWhenDisconnectedChanged = { [weak self] hide in
-            guard let self = self else { return }
-            self.hideWhenDisconnected = hide
+            self?.hideWhenDisconnected = hide
             UserDefaults.standard.set(hide, forKey: "HideWhenDisconnected")
-            self.statusItem.isVisible = !(hide && !self.isConnected)
+            self?.updateVisibility()
         }
-        dashboard.onSettingsChanged = { [weak self] in
-            self?.updateTitle()
-        }
+        dashboard.onSettingsChanged = { [weak self] in self?.updateTitle() }
+        dashboard.reloadDevices()
 
         if let content = dashboard.detachContentView() {
             popover.contentViewController = DashboardPanelViewController(content: content)
@@ -151,6 +137,8 @@ final class StatusBarController: NSObject {
         if NSApp.currentEvent?.type == .rightMouseUp {
             popover.performClose(nil)
             showContextMenu()
+        } else if deviceStore.devices.isEmpty {
+            openDeviceSearch()
         } else {
             togglePopover()
         }
@@ -162,11 +150,7 @@ final class StatusBarController: NSObject {
             return
         }
         guard let button = statusItem.button else { return }
-        if let r = bluetoothManager.currentReading {
-            dashboardController?.updateReading(r)
-        } else {
-            dashboardController?.reloadData()
-        }
+        dashboardController?.selectDevice(deviceStore.primaryID)  // 每次打開都選回主裝置
         dashboardController?.updatePresenceStatus()
         dashboardController?.switchTab(tab)
         NSApp.activate(ignoringOtherApps: true)
@@ -179,205 +163,182 @@ final class StatusBarController: NSObject {
         }
     }
 
-    /// 右鍵只保留最精簡的選單
+    /// 右鍵選單：裝置清單、搜尋、全部更新、設定、結束
     private func showContextMenu() {
-        let menu = NSMenu()
-        let settings = NSMenuItem(title: "設定…", action: #selector(showSettingsAction), keyEquivalent: ",")
-        settings.target = self
-        menu.addItem(settings)
-        menu.addItem(NSMenuItem.separator())
-        let quit = NSMenuItem(title: "結束 MijiaTempBar", action: #selector(handleQuit), keyEquivalent: "q")
-        quit.target = self
-        menu.addItem(quit)
-
-        statusItem.menu = menu
+        statusItem.menu = DeviceMenuBuilder.contextMenu(for: self)
         statusItem.button?.performClick(nil)
         statusItem.menu = nil
     }
 
+    // MARK: - 狀態列圖示
+
+    private func refreshTray() {
+        updateTitle()
+        updateVisibility()
+    }
+
     private func updateTitle() {
         guard let button = statusItem.button else { return }
-
-        guard let r = latestReading ?? bluetoothManager?.currentReading else {
+        guard let primary = deviceStore.primary else {
             button.image = nil
-            button.title = "🌡️ 搜尋中..."
+            button.title = "🌡️ 尚未加入裝置"
+            button.toolTip = "尚未加入裝置：點一下搜尋新裝置"
             return
         }
-
-        switch displayStyle {
-        case .statsBadge:
-            button.title = ""
-            button.image = makeStatsBadgeImage(temp: r.temperature, hum: r.humidity)
-            button.imagePosition = .imageOnly
-
-        case .stacked:
-            button.title = ""
-            button.image = makeStackedImage(temp: r.temperature, hum: r.humidity)
-            button.imagePosition = .imageOnly
-
-        case .horizontal:
+        let state = states[primary.id] ?? DeviceState()
+        if state.reading == nil && state.reachable != false {
             button.image = nil
-            button.title = String(format: "🌡️ %.1f°C  💧 %.0f%%", r.temperature, r.humidity)
-
-        case .tempOnly:
-            button.image = nil
-            button.title = String(format: "🌡️ %.1f°C", r.temperature)
-
-        case .compact:
-            button.image = nil
-            button.title = String(format: "%.1f° %.0f%%", r.temperature, r.humidity)
+            button.title = "🌡️ \(adapterStatus ?? state.status)"
+            button.toolTip = primary.name
+            return
         }
-
-        button.toolTip = String(
-            format: "%@\n溫度: %.1f°C\n濕度: %.0f%%\n電量: %d%%\n更新間隔: %d秒\n模式: %@",
-            r.deviceName, r.temperature, r.humidity, r.batteryPercent, Int(bluetoothManager.refreshInterval), r.mode
-        )
+        // 主裝置連不到時 trayValues 為 nil，圖示顯示 --
+        let values = DisplayRules.trayValues(state)
+        StatusItemRenderer.apply(style: displayStyle, temp: values.temperature, hum: values.humidity, to: button)
+        let battery = state.reading.map { "\($0.batteryPercent)%" } ?? "--"
+        button.toolTip = "\(primary.name)\n溫度: \(DisplayRules.formatTemp(values.temperature))°C\n" +
+            "濕度: \(DisplayRules.formatHum(values.humidity))%\n電量: \(battery)\n" +
+            "更新間隔: \(Int(bluetoothManager.refreshInterval))秒\n狀態: \(state.status)"
     }
 
-    /// 產生 [TMP] / [HUM] 雙行微型膠囊影像 (上下完全貼滿 24pt 版)
-    private func makeStatsBadgeImage(temp: Double, hum: Double) -> NSImage {
-        let topLabel = "TMP"
-        let bottomLabel = "HUM"
-        let topVal = String(format: "%.1f°", temp)
-        let bottomVal = String(format: "%.0f%%", hum)
-
-        let isDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let textColor = isDark ? NSColor.white : NSColor(white: 0.1, alpha: 1.0)
-
-        // 徹底吃滿 Mac 狀態列 24pt 高度：
-        // 數字放大至 11.2pt 粗黑體
-        // 膠囊字體放大至 8.2pt 超粗黑體
-        let badgeFont = NSFont.systemFont(ofSize: 8.2, weight: .black)
-        let valFont = NSFont.monospacedDigitSystemFont(ofSize: 11.2, weight: .bold)
-
-        let badgeAttrs: [NSAttributedString.Key: Any] = [
-            .font: badgeFont,
-            .foregroundColor: NSColor.white
-        ]
-        let valAttrs: [NSAttributedString.Key: Any] = [
-            .font: valFont,
-            .foregroundColor: textColor
-        ]
-
-        let topValSize = (topVal as NSString).size(withAttributes: valAttrs)
-        let bottomValSize = (bottomVal as NSString).size(withAttributes: valAttrs)
-        let maxValWidth = max(topValSize.width, bottomValSize.width)
-
-        // 膠囊尺寸：高度放大到 10.5pt，完全貼滿上下半部
-        let badgeWidth: CGFloat = 25.0
-        let badgeHeight: CGFloat = 10.5
-        let badgeRadius: CGFloat = 2.5
-        let gap: CGFloat = 4.5
-
-        let totalWidth = badgeWidth + gap + maxValWidth + 2.0
-        let totalHeight: CGFloat = 24.0
-
-        let image = NSImage(size: NSSize(width: totalWidth, height: totalHeight), flipped: false) { rect in
-            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
-
-            // 1. 上排 TMP 膠囊 (熱能暖橙：#EA580C) - 頂部貼近邊界
-            let topBadgeY: CGFloat = 12.5
-            let topBadgeRect = CGRect(x: 1.0, y: topBadgeY, width: badgeWidth, height: badgeHeight)
-            let topBadgePath = CGPath(roundedRect: topBadgeRect, cornerWidth: badgeRadius, cornerHeight: badgeRadius, transform: nil)
-
-            ctx.setFillColor(CGColor(red: 0.92, green: 0.35, blue: 0.10, alpha: 1.0))
-            ctx.addPath(topBadgePath)
-            ctx.fillPath()
-
-            // TMP 縮寫文字居中
-            let topLabelSize = (topLabel as NSString).size(withAttributes: badgeAttrs)
-            let topLabelPt = CGPoint(
-                x: topBadgeRect.midX - topLabelSize.width * 0.5,
-                y: topBadgeRect.midY - topLabelSize.height * 0.5 + 0.5
-            )
-            (topLabel as NSString).draw(at: topLabelPt, withAttributes: badgeAttrs)
-
-            // 上排溫度數值 (靠左對齊，飽滿大字)
-            let topValPt = CGPoint(x: topBadgeRect.maxX + gap, y: topBadgeY - 1.2)
-            (topVal as NSString).draw(at: topValPt, withAttributes: valAttrs)
-
-            // 2. 下排 HUM 膠囊 (濕度湛藍：#0284C7) - 底部貼近邊界
-            let bottomBadgeY: CGFloat = 1.0
-            let bottomBadgeRect = CGRect(x: 1.0, y: bottomBadgeY, width: badgeWidth, height: badgeHeight)
-            let bottomBadgePath = CGPath(roundedRect: bottomBadgeRect, cornerWidth: badgeRadius, cornerHeight: badgeRadius, transform: nil)
-
-            ctx.setFillColor(CGColor(red: 0.05, green: 0.55, blue: 0.88, alpha: 1.0))
-            ctx.addPath(bottomBadgePath)
-            ctx.fillPath()
-
-            // HUM 縮寫文字居中
-            let bottomLabelSize = (bottomLabel as NSString).size(withAttributes: badgeAttrs)
-            let bottomLabelPt = CGPoint(
-                x: bottomBadgeRect.midX - bottomLabelSize.width * 0.5,
-                y: bottomBadgeRect.midY - bottomLabelSize.height * 0.5 + 0.5
-            )
-            (bottomLabel as NSString).draw(at: bottomLabelPt, withAttributes: badgeAttrs)
-
-            // 下排濕度數值 (靠左對齊，飽滿大字)
-            let bottomValPt = CGPoint(x: bottomBadgeRect.maxX + gap, y: bottomBadgeY - 1.2)
-            (bottomVal as NSString).draw(at: bottomValPt, withAttributes: valAttrs)
-
-            return true
+    private func updateVisibility() {
+        if forceVisibleTimer != nil {
+            statusItem.isVisible = true
+            return
         }
-
-        image.isTemplate = false
-        return image
+        let hide = DisplayRules.shouldHideIcon(hideEnabled: hideWhenDisconnected,
+                                               deviceIDs: deviceStore.devices.map(\.id), states: states)
+        if hide { popover.performClose(nil) }
+        statusItem.isVisible = !hide
     }
 
-    /// 純數字雙行堆疊 (上下吃滿版)
-    private func makeStackedImage(temp: Double, hum: Double) -> NSImage {
-        let topText = String(format: "%.1f°", temp)
-        let bottomText = String(format: "%.0f%%", hum)
-
-        let fontTop = NSFont.monospacedDigitSystemFont(ofSize: 11.0, weight: .bold)
-        let fontBottom = NSFont.monospacedDigitSystemFont(ofSize: 11.0, weight: .bold)
-
-        let attrsTop: [NSAttributedString.Key: Any] = [
-            .font: fontTop,
-            .foregroundColor: NSColor.black
-        ]
-        let attrsBottom: [NSAttributedString.Key: Any] = [
-            .font: fontBottom,
-            .foregroundColor: NSColor.black
-        ]
-
-        let sizeTop = (topText as NSString).size(withAttributes: attrsTop)
-        let sizeBottom = (bottomText as NSString).size(withAttributes: attrsBottom)
-
-        let textWidth = max(sizeTop.width, sizeBottom.width)
-        let totalWidth = ceil(textWidth) + 6.0
-        let totalHeight: CGFloat = 24.0
-
-        let image = NSImage(size: NSSize(width: totalWidth, height: totalHeight), flipped: false) { rect in
-            let topPoint = NSPoint(x: (totalWidth - sizeTop.width) / 2.0, y: 12.5)
-            let bottomPoint = NSPoint(x: (totalWidth - sizeBottom.width) / 2.0, y: 1.0)
-
-            (topText as NSString).draw(at: topPoint, withAttributes: attrsTop)
-            (bottomText as NSString).draw(at: bottomPoint, withAttributes: attrsBottom)
-            return true
-        }
-
-        image.isTemplate = true
-        return image
-    }
-
-
+    /// 使用者在桌面點擊 App 圖示時，暫時喚起狀態列顯示 10 秒
     func temporarilyShowStatusItem() {
-        tempShowTimer?.invalidate()
+        forceVisibleTimer?.invalidate()
+        let t = Timer(timeInterval: 10.0, repeats: false) { [weak self] _ in
+            self?.forceVisibleTimer = nil
+            self?.updateVisibility()
+        }
+        RunLoop.main.add(t, forMode: .common)
+        forceVisibleTimer = t
         statusItem.isVisible = true
-        if !isConnected && hideWhenDisconnected {
-            tempShowTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: false) { [weak self] _ in
-                guard let self = self else { return }
-                if !self.isConnected {
-                    self.statusItem.isVisible = false
-                }
-            }
+    }
+
+    // MARK: - 裝置變動
+
+    private func devicesChanged() {
+        bluetoothManager.setDevices(deviceStore.devices, order: deviceStore.orderedIDs)
+        dashboardController?.reloadDevices()
+        refreshTray()
+        scheduleStatusWrite()
+    }
+
+    private func addCandidates(_ candidates: [DiscoveredDevice]) {
+        var existing = deviceStore.devices
+        var newDevices: [DeviceRecord] = []
+        for c in candidates {
+            let d = DeviceRecord(id: c.id, name: DeviceList.defaultName(existing: existing), kind: c.kind)
+            existing.append(d)
+            newDevices.append(d)
+        }
+        for d in deviceStore.add(newDevices) {
+            states[d.id] = cachedState(for: d)
+            mijiaLog("已加入裝置 \(d.name) [\(d.id)] (\(d.kind.rawValue))")
+        }
+        devicesChanged()
+    }
+
+    private func startSearchScan() {
+        guard let window = searchWindow else { return }
+        window.showSearching()
+        bluetoothManager.startDiscovery(
+            onUpdate: { [weak self, weak window] found in
+                guard let w = window, self?.searchWindow === w else { return }
+                w.update(found)
+            },
+            onFinish: { [weak self, weak window] found in
+                guard let w = window, self?.searchWindow === w else { return }
+                w.finish(found)
+            })
+    }
+
+    // MARK: - 狀態 JSON (最多每 5 秒寫一次)
+
+    private func scheduleStatusWrite() {
+        guard statusWriteTimer == nil else { return }
+        let wait = max(0, 5 - Date().timeIntervalSince(lastStatusWrite))
+        let t = Timer(timeInterval: wait, repeats: false) { [weak self] _ in self?.writeStatus() }
+        RunLoop.main.add(t, forMode: .common)
+        statusWriteTimer = t
+    }
+
+    private func writeStatus() {
+        statusWriteTimer = nil
+        lastStatusWrite = Date()
+        StatusFile.write(StatusFile.payload(devices: deviceStore.devices, states: states, primaryID: deviceStore.primaryID,
+                                            interval: bluetoothManager.refreshInterval, adapterStatus: adapterStatus))
+    }
+}
+
+// MARK: - DeviceCoordinator (選單、儀表板與設定分頁使用)
+extension StatusBarController: DeviceCoordinator {
+    var devices: [DeviceRecord] { deviceStore.devices }
+    var primaryID: String? { deviceStore.primaryID }
+    var globalStatus: String? { adapterStatus.map { s in adapterHint.map { "\(s) · \($0)" } ?? s } }
+
+    func state(for id: String) -> DeviceState { states[id] ?? DeviceState() }
+
+    func setPrimary(_ id: String) {
+        deviceStore.setPrimary(id)
+        devicesChanged()
+    }
+
+    func refresh(_ id: String?) {
+        temporarilyShowStatusItem()
+        for d in deviceStore.devices where d.kind == .stock && (id == nil || d.id == id) {
+            states[d.id] = state(for: d.id).withStatus("正在連線重新整理...", reachable: nil)
+            dashboardController?.deviceStateChanged(d.id)
+        }
+        bluetoothManager.refresh(deviceID: id)
+    }
+
+    func renameDevice(_ id: String) {
+        guard let device = deviceStore.device(id), let name = DeviceDialogs.askRename(current: device.name) else { return }
+        do {
+            try deviceStore.rename(id, to: name)
+            devicesChanged()
+        } catch {
+            DeviceDialogs.showError("無法重新命名", error.localizedDescription)
         }
     }
 
+    func removeDevice(_ id: String) {
+        guard let device = deviceStore.device(id), DeviceDialogs.confirmRemove(name: device.name) else { return }
+        deviceStore.remove(id)
+        states[id] = nil
+        mijiaLog("已移除裝置 \(device.name) [\(id)] (歷史檔保留)")
+        devicesChanged()
+    }
 
-    // MARK: - Actions
-    @objc private func showSettingsAction() {
+    func openDeviceSearch() {
+        UserDefaults.standard.set(true, forKey: Self.discoveryPromptedKey)
+        popover.performClose(nil)
+        if let existing = searchWindow {
+            existing.window?.makeKeyAndOrderFront(nil)
+            return
+        }
+        let window = DeviceSearchWindowController(duration: 20) { [weak self] in Set(self?.deviceStore.devices.map(\.id) ?? []) }
+        window.onAdd = { [weak self] chosen in self?.addCandidates(chosen) }
+        window.onRetry = { [weak self] in self?.startSearchScan() }
+        window.onClose = { [weak self] in
+            self?.bluetoothManager.stopDiscovery()
+            self?.searchWindow = nil
+        }
+        searchWindow = window
+        startSearchScan()
+    }
+
+    func openSettings() {
         if popover.isShown {
             dashboardController?.switchTab(.settings)
         } else {
@@ -385,59 +346,49 @@ final class StatusBarController: NSObject {
         }
     }
 
-    private func handleRefresh() {
-        statusItem.isVisible = true
-        dashboardController?.updateStatusText("正在連線重新整理...")
-        bluetoothManager.manualRefresh()
-    }
-
-    @objc private func handleQuit() {
+    func quit() {
         NSApplication.shared.terminate(nil)
     }
 }
 
 // MARK: - BluetoothManagerDelegate
 extension StatusBarController: BluetoothManagerDelegate {
-    func didUpdateStatus(_ status: String) {
-        dashboardController?.updateStatusText(status)
-
-        if bluetoothManager.currentReading == nil && isConnected == false {
-            statusItem.button?.image = nil
-            statusItem.button?.title = "🌡️ \(status)"
-        }
+    func didUpdateAdapterStatus(_ status: String, available: Bool) {
+        adapterStatus = available ? nil : status
+        if available { adapterHint = nil }
+        refreshTray()
+        dashboardController?.refreshStatus()
+        scheduleStatusWrite()
     }
 
-    func didChangeReachability(_ reachable: Bool) {
-        guard !reachable else { return }
-        isConnected = false
-        if hideWhenDisconnected {
-            popover.performClose(nil)
-            statusItem.isVisible = false
-        }
+    func didUpdateDeviceStatus(_ status: String, deviceID: String, reachable: Bool?) {
+        guard deviceStore.device(deviceID) != nil else { return }  // 已移除的裝置
+        states[deviceID] = state(for: deviceID).withStatus(status, reachable: reachable)
+        refreshTray()
+        dashboardController?.deviceStateChanged(deviceID)
+        scheduleStatusWrite()
     }
 
-    func didUpdateReading(_ reading: SensorReading) {
-        isConnected = true
-        tempShowTimer?.invalidate()
-        tempShowTimer = nil
-        latestReading = reading
+    func didUpdateReading(_ reading: SensorReading, deviceID: String) {
+        guard let device = deviceStore.device(deviceID) else { return }
+        var r = reading
+        r.deviceName = device.name
+        states[deviceID] = state(for: deviceID).withReading(r)
 
-        statusItem.isVisible = true
-
-        // 先寫入歷史，面板與儀表板重繪時才包含這一筆
-        HistoryManager.shared.addPoint(
-            temp: reading.temperature,
-            hum: reading.humidity,
-            volt: reading.voltage,
-            battery: reading.batteryPercent
-        )
-        updateTitle()
-        dashboardController?.updateReading(reading)
-        NotificationManager.shared.checkReading(reading)
+        // 先寫入歷史，面板重繪時才包含這一筆；開源廣播依更新間隔取樣，避免每 10 秒寫一次檔
+        let history = HistoryManager.forDevice(deviceID)
+        if !r.isBroadcast || (history.lastPoint.map { Date().timeIntervalSince($0.timestamp) >= bluetoothManager.refreshInterval } ?? true) {
+            history.addPoint(temp: r.temperature, hum: r.humidity, volt: r.voltage, battery: r.batteryPercent)
+        }
+        refreshTray()
+        dashboardController?.deviceStateChanged(deviceID)
+        NotificationManager.shared.checkReading(r, deviceID: deviceID, deviceName: device.name)
+        scheduleStatusWrite()
     }
 
     func didFailWithError(_ error: String) {
-        dashboardController?.updateStatusText(error)
+        adapterHint = error
+        dashboardController?.refreshStatus()
     }
 }
 

@@ -8,14 +8,19 @@ swift generate_icon.swift AppIcon.iconset
 iconutil -c icns AppIcon.iconset -o AppIcon.icns
 rm -rf AppIcon.iconset
 
+# 最低支援 macOS 版本：同時用於編譯目標與 Info.plist，編譯器才會檢查新 API 的 #available
+MIN_MACOS=12.0
+
 echo "==> 正在編譯 MijiaTempBar (Swift Native)..."
 swiftc -O -module-cache-path /tmp/clang_cache \
+    -target "$(uname -m)-apple-macos$MIN_MACOS" \
     -framework AppKit \
     -framework CoreBluetooth \
     -framework UserNotifications \
     -framework CoreLocation \
     -framework Network \
     -framework CoreWLAN \
+    -framework ServiceManagement \
     Sources/*.swift \
     -o MijiaTempBar
 
@@ -48,13 +53,13 @@ cat > "$APP/Contents/Info.plist" <<EOF
     <key>CFBundleShortVersionString</key>
     <string>1.8.0</string>
     <key>LSMinimumSystemVersion</key>
-    <string>12.0</string>
+    <string>$MIN_MACOS</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSBluetoothAlwaysUsageDescription</key>
-    <string>需要使用藍牙連線並讀取米家溫濕度計 2 的即時溫濕度與電量數據。</string>
+    <string>需要使用藍牙連線並讀取米家溫濕度計的即時溫濕度與電量數據。</string>
     <key>NSBluetoothPeripheralUsageDescription</key>
-    <string>需要使用藍牙連線並讀取米家溫濕度計 2 的即時溫濕度與電量數據。</string>
+    <string>需要使用藍牙連線並讀取米家溫濕度計的即時溫濕度與電量數據。</string>
     <key>NSLocationWhenInUseUsageDescription</key>
     <string>用於建立居家大範圍地理圍欄，在您離開家時徹底關閉藍牙輪詢以節省筆電電力，回到家時自動喚醒連線。</string>
     <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
