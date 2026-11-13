@@ -48,6 +48,7 @@ final class BluetoothManager: NSObject {
     private var attempt: Attempt?
     private var attemptCounter = 0
     private var oneShotIDs = Set<String>()            // 離家停機時手動要求的單次讀取
+    private var sleepingAfterRead = Set<String>()     // 讀取成功後主動斷線的裝置 (斷線回呼時記錄「進入休眠」)
     private var scanReasons = Set<ScanReason>()
     private var isScanning = false
     private var schedulerTimer: Timer?
@@ -262,7 +263,9 @@ final class BluetoothManager: NSObject {
         if scanReasons.remove(.rediscover) != nil { updateScanning() }
 
         switch outcome {
-        case .success(let reading): recordSuccess(id, reading)
+        case .success(let reading):
+            sleepingAfterRead.insert(id)
+            recordSuccess(id, reading)
         case .failure(let message, let timeout): recordFailure(id, message, timeout: timeout)
         case .cancelled: break
         }
@@ -429,7 +432,7 @@ extension BluetoothManager: CBCentralManagerDelegate {
         if let a = attempt, a.id == id, a.phase == .connected {
             // 讀到數據前就斷線：算一次失敗並排定重試 (舊版在這裡會停止輪詢)
             finishAttempt(id, token: a.token, outcome: .failure("非預期連線中斷: \(error?.localizedDescription ?? "正常斷線")", timeout: false))
-        } else if attempt?.id != id {
+        } else if sleepingAfterRead.remove(id) != nil {
             mijiaLog("設備已成功進入省電休眠 [\(id)]。")
         }
     }
