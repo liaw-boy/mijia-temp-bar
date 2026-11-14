@@ -66,6 +66,8 @@ class _Runtime:
     due: float
     failures: int = 0
     last_success: Optional[float] = None
+    # 手動更新前已連續失敗 (退避被手動重設)：這次連線仍視為連不到的裝置，可被另一台的手動更新插隊
+    was_failing: bool = False
 
 
 class PollEngine:
@@ -113,19 +115,21 @@ class PollEngine:
     def refresh(self, device_id: Optional[str] = None) -> None:
         """立刻更新指定裝置 (None 為全部)，並重設其退避。
 
-        若目前正在對另一台連不到的裝置做離線重試，先中斷那次 (不算失敗)，
+        若目前正在對另一台連不到的裝置連線 (離線重試，或對它的手動更新)，先中斷那次 (不算失敗)，
         否則手動更新要等它連線逾時才會開始。
         """
         now = self._clock()
         targets = [key for key in self._runtimes if device_id is None or key == device_id]
         for key in targets:
-            self._runtimes[key].due = now
-            self._runtimes[key].failures = 0
+            runtime = self._runtimes[key]
+            runtime.was_failing = runtime.was_failing or runtime.failures > 0
+            runtime.due = now
+            runtime.failures = 0
             if key not in self._priority:
                 self._priority.append(key)
         current = self._runtimes.get(self._current_id) if self._current_id else None
         if (self._current is not None and self._current_id not in targets
-                and current is not None and current.failures > 0):
+                and current is not None and (current.failures > 0 or current.was_failing)):
             self._preempted = True
             self._current.cancel()
         self._wake.set()
@@ -187,7 +191,7 @@ class PollEngine:
         except asyncio.CancelledError:
             if self._preempted:
                 self._preempted = False
-                mijia_log(f"手動更新插隊：中斷 [{device_id}] 的離線重試 (不算失敗)")
+                mijia_log(f"手動更新插隊：中斷 [{device_id}] 的連線 (這台原本就連不到，不算失敗)")
                 preempted = getattr(self._listener, "on_poll_preempted", None)
                 if preempted is not None:
                     self._notify(preempted, device_id)
@@ -210,6 +214,7 @@ class PollEngine:
             return  # 讀取期間被移除的裝置：結果丟棄
         now = self._clock()
         runtime.failures = 0
+        runtime.was_failing = False
         runtime.last_success = now
         runtime.due = now + self._interval
         self._notify(self._listener.on_poll_success, device_id, result, runtime.due)
@@ -219,6 +224,7 @@ class PollEngine:
         if runtime is None:
             return
         runtime.failures += 1
+        runtime.was_failing = False
         delay = self._retry(runtime.failures, self._interval)
         runtime.due = self._clock() + delay
         self._notify(self._listener.on_poll_failure, device_id, error, delay, runtime.failures)

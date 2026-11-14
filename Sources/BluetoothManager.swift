@@ -25,7 +25,8 @@ final class BluetoothManager: NSObject {
     private let charUUID = CBUUID(string: "EBE0CCC1-7A0A-4B0C-8A1A-6FF2997DA3A6")
     private let broadcastMinInterval: TimeInterval = 10  // 開源廣播每台裝置最短的介面更新間隔
 
-    private struct Runtime { var due: Date; var failures = 0; var lastSuccess: Date? }
+    /// wasFailing：手動更新前已連續失敗 (退避被手動重設)，這次連線仍視為連不到的裝置，可被另一台的手動更新插隊
+    private struct Runtime { var due: Date; var failures = 0; var lastSuccess: Date?; var wasFailing = false }
     private struct BroadcastState { var lastSeen: Date; var lastEmit = Date.distantPast; var staleReported = false }
     private enum Phase { case locating, connecting, connected }
     private struct Attempt { let id: String; let token: Int; var phase: Phase; let timer: Timer }
@@ -104,13 +105,16 @@ final class BluetoothManager: NSObject {
         let targets = order.filter { deviceID == nil || $0 == deviceID }
         let now = Date()
         for id in targets {
-            runtimes[id]?.due = now
-            runtimes[id]?.failures = 0
+            guard var rt = runtimes[id] else { continue }
+            rt.wasFailing = rt.wasFailing || rt.failures > 0
+            rt.due = now
+            rt.failures = 0
+            runtimes[id] = rt
         }
         manualIDs.formUnion(targets)
-        // 正在對另一台連不到的裝置做離線重試：先中斷那次 (不算失敗)，否則要等它逾時才輪到手動更新
-        if let a = attempt, !targets.contains(a.id), (runtimes[a.id]?.failures ?? 0) > 0 {
-            mijiaLog("手動更新插隊：中斷 [\(a.id)] 的離線重試 (不算失敗)")
+        // 正在對另一台連不到的裝置連線 (離線重試，或對它的手動更新)：先中斷那次 (不算失敗)，否則要等它逾時才輪到手動更新
+        if let a = attempt, !targets.contains(a.id), let current = runtimes[a.id], current.failures > 0 || current.wasFailing {
+            mijiaLog("手動更新插隊：中斷 [\(a.id)] 的連線 (這台原本就連不到，不算失敗)")
             finishAttempt(a.id, token: a.token, outcome: .cancelled)
             delegate?.didUpdateDeviceStatus("設備未在連線範圍內", deviceID: a.id, reachable: false)
         }
@@ -296,6 +300,7 @@ final class BluetoothManager: NSObject {
         guard var rt = runtimes[id] else { return }  // 讀取期間被移除的裝置：結果丟棄
         let now = Date()
         rt.failures = 0
+        rt.wasFailing = false
         rt.lastSuccess = now
         rt.due = now.addingTimeInterval(refreshInterval)
         runtimes[id] = rt
@@ -309,6 +314,7 @@ final class BluetoothManager: NSObject {
     private func recordFailure(_ id: String, _ message: String, timeout: Bool) {
         guard var rt = runtimes[id] else { return }
         rt.failures += 1
+        rt.wasFailing = false
         let delay = Backoff.retryDelay(failures: rt.failures, interval: refreshInterval)
         rt.due = Date().addingTimeInterval(delay)
         runtimes[id] = rt

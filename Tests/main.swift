@@ -212,6 +212,12 @@ do {
     check(DisplayRules.displayDeviceID(primaryID: A, orderedIDs: [A, B], states: [A: st(nil, 0), B: st(true, 0)]) == A, "主裝置尚未確認")
     check(DisplayRules.displayDeviceID(primaryID: A, orderedIDs: [A, B], states: [A: st(false, 0), B: DeviceState(reachable: true)]) == A, "附近那台沒有讀數不算")
     check(DisplayRules.displayDeviceID(primaryID: nil, orderedIDs: [], states: [:]) == nil, "沒有主裝置")
+    // 兩台都在附近時維持目前顯示的那台，不會因為讀取順序跳來跳去
+    let both = [A: st(false, 0), B: st(true, 9), C: st(true, 1)]
+    check(DisplayRules.displayDeviceID(primaryID: A, orderedIDs: [A, B, C], states: both, current: C) == C, "維持目前顯示的附近裝置")
+    check(DisplayRules.displayDeviceID(primaryID: A, orderedIDs: [A, B, C], states: both, current: nil) == B, "沒有目前顯示的取最近讀到的")
+    check(DisplayRules.displayDeviceID(primaryID: A, orderedIDs: [A, B, C], states: [A: st(false, 0), B: st(true, 1), C: st(false, 9)], current: C) == B, "目前顯示的那台離開就換")
+    check(DisplayRules.displayDeviceID(primaryID: A, orderedIDs: [A, B], states: [A: st(true, 0), B: st(true, 9)], current: B) == A, "主裝置回來就換回")
 
     let bt = hex("40" + "0001" + "015a" + "022909" + "03d711" + "0c860b")
     let stock = DeviceDiscovery.candidate(id: A, name: "LYWSD03MMC", rssi: -61, serviceData: [:])

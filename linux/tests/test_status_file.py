@@ -92,6 +92,20 @@ class DisplayDeviceTests(unittest.TestCase):
         states = {A: self.state(False), B: self.state(True, 1), self.C: self.state(True, 9)}
         self.assertEqual(display_device_id(A, [A, B, self.C], states), self.C)
 
+    def test_keeps_the_nearby_device_already_shown(self):
+        """兩台都在附近時維持目前顯示的那台，狀態列不會因為讀取順序在兩台間跳來跳去。"""
+        states = {A: self.state(False), B: self.state(True, 9), self.C: self.state(True, 1)}
+        self.assertEqual(display_device_id(A, [A, B, self.C], states, current=self.C), self.C)
+        self.assertEqual(display_device_id(A, [A, B, self.C], states, current=None), B)
+
+    def test_switches_when_shown_device_leaves(self):
+        states = {A: self.state(False), B: self.state(True, 1), self.C: self.state(False, 9)}
+        self.assertEqual(display_device_id(A, [A, B, self.C], states, current=self.C), B)
+
+    def test_returns_to_primary_when_back(self):
+        states = {A: self.state(True), B: self.state(True, 9)}
+        self.assertEqual(display_device_id(A, [A, B], states, current=B), A)
+
     def test_all_away_keeps_primary(self):
         states = {A: self.state(False), B: self.state(False)}
         self.assertEqual(display_device_id(A, [A, B], states), A)

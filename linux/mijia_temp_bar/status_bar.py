@@ -77,6 +77,7 @@ class StatusBarController:
             mijia_log(f"遷移失敗，下次啟動會再試: {e}")
         # 啟動時先用每台最後一筆歷史當快取 (避免圖示閃爍或意外消失)
         self.states: Dict[str, DeviceState] = {d.id: self._cached_state(d) for d in self.devices}
+        self._shown_id: Optional[str] = None  # 狀態列目前顯示的裝置 (維持附近那台，不在兩台間跳)
 
         self.bluetooth_manager = BluetoothManager(dispatch=dispatch_to_main)
         self.bluetooth_manager.delegate = self
@@ -154,7 +155,7 @@ class StatusBarController:
     @property
     def displayed_id(self) -> Optional[str]:
         """狀態列實際顯示的裝置：主裝置不在附近時改為附近那台。"""
-        return display_device_id(self.primary_id, self.device_store.ordered_ids(), self.states)
+        return display_device_id(self.primary_id, self.device_store.ordered_ids(), self.states, self._shown_id)
 
     # MARK: - 系統匣圖示
 
@@ -186,6 +187,7 @@ class StatusBarController:
 
     def _update_title(self) -> None:
         primary = self.device_store.get(self.displayed_id)
+        self._shown_id = primary.id if primary else None
         if primary is None:
             text = "🌡️ 尚未加入裝置"
             self._set_tray_image(("text", text), lambda: render_text(text), "尚未加入裝置，請從選單搜尋新裝置")

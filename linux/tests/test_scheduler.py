@@ -183,6 +183,52 @@ class PollEngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.recorder.successes[-1][0], A)
         self.assertEqual(engine.failures(B), 1)  # 被插隊中斷的那次不算失敗
 
+    async def test_manual_refresh_preempts_a_manual_read_of_an_away_device(self):
+        # B 已連不到；手動更新 B 卡在連線中時再手動更新 A：最後按的優先，不必等 B 逾時
+        slow = asyncio.Event()
+
+        async def read(device_id):
+            self.reads.append(device_id)
+            if device_id == B:
+                await slow.wait()
+                raise asyncio.TimeoutError()
+            return f"reading-{device_id}"
+
+        engine = PollEngine(read, self.recorder, retry=lambda n, i: 10.0, max_wait=0.05)
+        engine.set_interval(10.0)
+        engine.set_devices([B, A])
+        task = asyncio.create_task(engine.run())
+        await asyncio.sleep(0.02)
+        slow.set()                      # B 第一次失敗 (退避 10 秒)，接著讀到 A
+        await asyncio.sleep(0.03)
+        slow.clear()
+        engine.refresh(B)               # 手動更新 B：卡在連線中
+        await asyncio.sleep(0.02)
+        self.assertEqual(engine.failures(B), 0)
+        before = len(self.recorder.successes)
+        engine.refresh(A)
+        await asyncio.sleep(0.03)
+        task.cancel()
+        self.assertGreater(len(self.recorder.successes), before)
+        self.assertEqual(self.recorder.successes[-1][0], A)
+
+    async def test_manual_refresh_does_not_preempt_a_manual_read_of_a_healthy_device(self):
+        self.block = asyncio.Event()
+        self.engine.set_devices([A, B])
+        await asyncio.sleep(0.02)       # A 正常讀取中 (第一次)
+        self.block.set()
+        await asyncio.sleep(0.05)
+        self.block.clear()
+        count = len(self.recorder.successes)
+        self.engine.refresh(A)          # 手動更新正常的 A：卡在連線中
+        await asyncio.sleep(0.02)
+        self.engine.refresh(B)
+        await asyncio.sleep(0.02)
+        self.assertEqual(len(self.recorder.successes), count)
+        self.block.set()
+        await asyncio.sleep(0.05)
+        self.assertEqual([s[0] for s in self.recorder.successes[count:count + 2]], [A, B])
+
     async def test_manual_refresh_does_not_preempt_a_healthy_read(self):
         self.block = asyncio.Event()
         self.engine.set_devices([A, B])

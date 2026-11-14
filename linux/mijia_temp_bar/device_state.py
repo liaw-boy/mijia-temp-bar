@@ -33,23 +33,27 @@ def should_hide_icon(hide_enabled: bool, device_ids: Sequence[str], states: Mapp
     return all(device_id in states and states[device_id].reachable is False for device_id in device_ids)
 
 
+def _is_nearby(states: Mapping[str, DeviceState], device_id: Optional[str]) -> bool:
+    state = states.get(device_id) if device_id else None
+    return state is not None and state.reachable is True and state.reading is not None
+
+
 def display_device_id(primary_id: Optional[str], ordered_ids: Sequence[str],
-                      states: Mapping[str, DeviceState]) -> Optional[str]:
+                      states: Mapping[str, DeviceState], current: Optional[str] = None) -> Optional[str]:
     """狀態列要顯示哪一台 (帶筆電換地方時用)。
 
-    主裝置可連線或尚未確認 → 主裝置；主裝置連不到但有別台在附近 → 最近讀到的那台
-    (不改使用者選的主裝置，回到主裝置附近就換回來)；都連不到 → 仍是主裝置 (畫成 -- 或依設定隱藏)。
+    主裝置可連線或尚未確認 → 主裝置；主裝置連不到時，目前顯示的附近裝置仍在附近就維持
+    (不會因為讀取順序在兩台間跳)，否則換最近讀到的那台。不改使用者選的主裝置，回到主裝置附近就換回來；
+    都連不到 → 仍是主裝置 (畫成 -- 或依設定隱藏)。current 為狀態列目前顯示的裝置。
     """
     if primary_id is None:
         return None
     primary = states.get(primary_id)
     if primary is None or primary.reachable is not False:
         return primary_id
-    nearby = [
-        device_id for device_id in ordered_ids
-        if device_id != primary_id and device_id in states
-        and states[device_id].reachable is True and states[device_id].reading is not None
-    ]
+    if current != primary_id and current in ordered_ids and _is_nearby(states, current):
+        return current
+    nearby = [device_id for device_id in ordered_ids if device_id != primary_id and _is_nearby(states, device_id)]
     if not nearby:
         return primary_id
     return max(nearby, key=lambda device_id: states[device_id].reading.last_updated)

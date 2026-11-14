@@ -10,6 +10,7 @@ final class StatusBarController: NSObject {
     private var bluetoothManager: BluetoothManager!
     private let deviceStore: DeviceStore
     private var states: [String: DeviceState] = [:]
+    private var shownID: String?   // 狀態列目前顯示的裝置 (維持附近那台，不在兩台間跳)
     private var displayStyle: DisplayStyle = .statsBadge
     private var hideWhenDisconnected: Bool = true  // 「僅連線時顯示」：全部裝置都連不到才隱藏
     private var adapterStatus: String?
@@ -184,7 +185,9 @@ final class StatusBarController: NSObject {
 
     private func updateTitle() {
         guard let button = statusItem.button else { return }
-        guard let primary = deviceStore.device(displayedID) else {
+        let shown = deviceStore.device(displayedID)
+        shownID = shown?.id
+        guard let primary = shown else {
             StatusItemRenderer.showText("🌡️ 尚未加入裝置", on: button)
             button.toolTip = "尚未加入裝置：點一下搜尋新裝置"
             return
@@ -291,7 +294,8 @@ extension StatusBarController: DeviceCoordinator {
     var primaryID: String? { deviceStore.primaryID }
     /// 狀態列實際顯示的裝置：主裝置不在附近時改為附近那台
     var displayedID: String? {
-        DisplayRules.displayDeviceID(primaryID: deviceStore.primaryID, orderedIDs: deviceStore.orderedIDs, states: states)
+        DisplayRules.displayDeviceID(primaryID: deviceStore.primaryID, orderedIDs: deviceStore.orderedIDs, states: states,
+                                     current: shownID)
     }
     var globalStatus: String? { adapterStatus.map { s in adapterHint.map { "\(s) · \($0)" } ?? s } }
 

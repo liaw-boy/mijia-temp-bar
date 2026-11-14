@@ -59,11 +59,15 @@ enum DisplayRules {
     }
 
     /// 狀態列要顯示哪一台 (帶筆電換地方時用)：主裝置可連線或尚未確認 → 主裝置；
-    /// 主裝置連不到但有別台在附近 → 最近讀到的那台 (不改使用者選的主裝置)；都連不到 → 仍是主裝置
-    static func displayDeviceID(primaryID: String?, orderedIDs: [String], states: [String: DeviceState]) -> String? {
+    /// 主裝置連不到時，目前顯示的附近裝置 (current) 仍在附近就維持 (不會因為讀取順序在兩台間跳)，
+    /// 否則換最近讀到的那台；不改使用者選的主裝置。都連不到 → 仍是主裝置
+    static func displayDeviceID(primaryID: String?, orderedIDs: [String], states: [String: DeviceState],
+                                current: String? = nil) -> String? {
         guard let primary = primaryID else { return nil }
         guard states[primary]?.reachable == false else { return primary }
-        let nearby = orderedIDs.filter { $0 != primary && states[$0]?.reachable == true && states[$0]?.reading != nil }
+        func isNearby(_ id: String) -> Bool { states[id]?.reachable == true && states[id]?.reading != nil }
+        if let shown = current, shown != primary, orderedIDs.contains(shown), isNearby(shown) { return shown }
+        let nearby = orderedIDs.filter { $0 != primary && isNearby($0) }
         return nearby.max { (states[$0]?.reading?.lastUpdated ?? .distantPast) < (states[$1]?.reading?.lastUpdated ?? .distantPast) } ?? primary
     }
 
