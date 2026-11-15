@@ -151,7 +151,7 @@ CR2032 鈕扣電池在壽命末期（電壓跌破 2.60V）會進入斷崖式崩�
 ### macOS 版本
 
 #### 方式 1：直接下載發行版本（最推薦）
-1. 前往 **[Releases 頁面](https://github.com/liaw-boy/mijia-temp-bar/releases)** 下載最新版 `MijiaTempBar-v1.8.0.zip`。
+1. 前往 **[Releases 頁面](https://github.com/liaw-boy/mijia-temp-bar/releases)** 下載最新版 `MijiaTempBar-v1.9.0.zip`。
 2. 解壓縮後將 `MijiaTempBar.app` 拖移至 `/Applications`（應用程式）資料夾。
 3. 雙擊啟動即可！（首次啟動若系統跳出「想使用藍牙」，請點選允許）。
 
