@@ -93,6 +93,21 @@ class PerDeviceHistoryTests(unittest.TestCase):
         self.assertEqual(len(backups), 1)
         self.assertEqual(backups[0].read_text(encoding="utf-8"), "{broken")
 
+    def test_non_utf8_file_is_set_aside_not_crash(self):
+        self.base.mkdir(parents=True)
+        path = self.base / "A4C1388C9B32.json"
+        path.write_bytes(b"\xff\xfe\x00bad")
+        history = HistoryManager(path)
+        self.assertEqual(history.points, [])
+        self.assertEqual(len(list(self.base.glob("A4C1388C9B32.corrupt-*.json"))), 1)
+
+    def test_unreadable_file_is_never_overwritten(self):
+        path = self.base / "A4C1388C9B32.json"
+        path.mkdir(parents=True)  # 目錄當檔案讀 → IsADirectoryError (OSError，但不是檔案不存在)
+        history = HistoryManager(path)
+        history.add_point(20.0, 50.0, 3.0, 100, timestamp=1.0)
+        self.assertTrue(path.is_dir())
+
 
 if __name__ == "__main__":
     unittest.main()

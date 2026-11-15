@@ -161,6 +161,11 @@ do {
     check(HistoryManager(storageURL: broken).points.isEmpty, "損毀檔讀為空")
     let backups = (try? FileManager.default.contentsOfDirectory(atPath: dir.path))?.filter { $0.hasPrefix("broken.corrupt-") } ?? []
     check(backups.count == 1, "損毀檔另存")
+    let unreadable = dir.appendingPathComponent("unreadable.json")
+    try! FileManager.default.createDirectory(at: unreadable, withIntermediateDirectories: true)
+    HistoryManager(storageURL: unreadable).addPoint(temp: 20, hum: 50, volt: 3, battery: 100)
+    var isDir: ObjCBool = false
+    check(FileManager.default.fileExists(atPath: unreadable.path, isDirectory: &isDir) && isDir.boolValue, "讀不到的歷史檔不會被覆蓋")
 }
 
 // MARK: - 通知規則

@@ -43,6 +43,7 @@ class HistoryManager:
     def __init__(self, storage_path: Path):
         self.storage_path = storage_path
         self.points: List[HistoryPoint] = []
+        self._read_only = False  # 讀不到或無法另存原檔時不寫入，避免蓋掉使用者的歷史
         self._load()
 
     @property
@@ -62,6 +63,8 @@ class HistoryManager:
         self._save()
 
     def _save(self) -> None:
+        if self._read_only:
+            return
         try:
             atomic_write_text(self.storage_path, json.dumps([asdict(p) for p in self.points]))
         except OSError as e:
@@ -69,12 +72,16 @@ class HistoryManager:
 
     def _load(self) -> None:
         try:
-            text = self.storage_path.read_text(encoding="utf-8")
-        except OSError:
-            self.points = []
+            raw = self.storage_path.read_bytes()
+        except FileNotFoundError:
+            return
+        except OSError as e:
+            self._read_only = True
+            mijia_log(f"無法讀取歷史檔 {self.storage_path.name}，本次不寫入: {e}")
             return
         try:
-            self.points = [HistoryPoint(**item) for item in json.loads(text)]
+            # 解碼失敗 (UnicodeDecodeError) 也屬於 ValueError，一併當成損毀
+            self.points = [HistoryPoint(**item) for item in json.loads(raw.decode("utf-8"))]
         except (ValueError, TypeError):
             self.points = []
             self._set_aside_corrupted()
@@ -86,7 +93,8 @@ class HistoryManager:
             copy_without_overwrite(self.storage_path, backup)
             mijia_log(f"歷史檔損毀，已另存為 {backup.name}")
         except OSError as e:
-            mijia_log(f"歷史檔損毀且無法另存: {e}")
+            self._read_only = True
+            mijia_log(f"歷史檔損毀且無法另存，本次不寫入: {e}")
 
     # MARK: - 統計指標
     @property

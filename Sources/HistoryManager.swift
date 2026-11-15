@@ -27,6 +27,7 @@ final class HistoryManager {
 
     private(set) var points: [HistoryPoint] = []
     let storageURL: URL
+    private var readOnly = false  // 讀不到或無法另存原檔時不寫入，避免蓋掉使用者的歷史
     private let maxPoints = 8640 // 最多保留 30 天 (5分鐘間隔 = 8640筆)
 
     init(storageURL: URL) {
@@ -51,14 +52,19 @@ final class HistoryManager {
     }
 
     private func saveHistory() {
-        guard let data = try? JSONEncoder().encode(points) else { return }
+        guard !readOnly, let data = try? JSONEncoder().encode(points) else { return }
         try? FileManager.default.createDirectory(at: storageURL.deletingLastPathComponent(),
                                                  withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try? data.write(to: storageURL, options: .atomic)
     }
 
     private func loadHistory() {
-        guard let data = try? Data(contentsOf: storageURL) else { return }
+        guard FileManager.default.fileExists(atPath: storageURL.path) else { return }
+        guard let data = try? Data(contentsOf: storageURL) else {
+            readOnly = true
+            mijiaLog("無法讀取歷史檔 \(storageURL.lastPathComponent)，本次不寫入")
+            return
+        }
         guard let loaded = try? JSONDecoder().decode([HistoryPoint].self, from: data) else {
             setAsideCorrupted()
             return
@@ -74,9 +80,12 @@ final class HistoryManager {
         do {
             if try FileOps.copyWithoutOverwrite(from: storageURL, to: backup) {
                 mijiaLog("歷史檔損毀，已另存為 \(backup.lastPathComponent)")
+            } else {
+                readOnly = true  // 同一秒的備份已存在，保守起見不覆蓋原檔
             }
         } catch {
-            mijiaLog("歷史檔損毀且無法另存: \(error.localizedDescription)")
+            readOnly = true
+            mijiaLog("歷史檔損毀且無法另存，本次不寫入: \(error.localizedDescription)")
         }
     }
 

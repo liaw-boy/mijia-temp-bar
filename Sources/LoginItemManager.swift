@@ -52,7 +52,8 @@ enum LoginItemManager {
             switch SMAppService.mainApp.status {
             case .enabled: return .enabled
             case .requiresApproval: return .requiresApproval
-            default: return .disabled
+            // 從 macOS 12 升級上來時，舊的 LaunchAgent 檔仍會讓 App 自動啟動，要顯示為開啟才關得掉
+            default: return FileManager.default.fileExists(atPath: agentURL.path) ? .enabled : .disabled
             }
         }
         return FileManager.default.fileExists(atPath: agentURL.path) ? .enabled : .disabled
@@ -72,7 +73,7 @@ enum LoginItemManager {
                 try? setLaunchAgent(false)  // 從 macOS 12 升級上來時留下的舊設定檔，避免重複啟動
                 if enabled {
                     try SMAppService.mainApp.register()
-                } else {
+                } else if SMAppService.mainApp.status != .notRegistered {
                     try SMAppService.mainApp.unregister()
                 }
             } else {
