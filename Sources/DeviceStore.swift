@@ -177,7 +177,8 @@ final class DeviceStore {
 
     private func claimLegacyHistory(for id: String) {
         do {
-            _ = try FileOps.copyWithoutOverwrite(from: legacyHistory, to: historyURL(for: id))
+            // 這台已有自己的歷史 (例如移除後重新加入)：留給下一台新加入的裝置
+            guard try FileOps.copyWithoutOverwrite(from: legacyHistory, to: historyURL(for: id)) else { return }
             store.set(false, forKey: DeviceKeys.legacyUnclaimed)
             mijiaLog("舊歷史已交給第一台加入的裝置 \(id)")
         } catch {

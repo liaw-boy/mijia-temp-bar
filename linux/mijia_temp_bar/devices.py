@@ -307,9 +307,11 @@ class DeviceStore:
 
     def _claim_legacy_history(self, device_id: str) -> None:
         try:
-            copy_without_overwrite(self._legacy_history, self.history_path(device_id))
+            copied = copy_without_overwrite(self._legacy_history, self.history_path(device_id))
         except OSError as e:
             mijia_log(f"無法把舊歷史複製給 {device_id}: {e}")
+            return
+        if not copied:  # 這台已有自己的歷史 (例如移除後重新加入)：留給下一台新加入的裝置
             return
         self._store.set(LEGACY_UNCLAIMED_KEY, False)
         mijia_log(f"舊歷史已交給第一台加入的裝置 {device_id}")

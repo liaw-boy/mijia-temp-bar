@@ -171,7 +171,7 @@ final class LocationGatekeeper: NSObject, CLLocationManagerDelegate {
         if let mac = gateway.mac {
             self.homeGatewayMAC = mac
             UserDefaults.standard.set(gateway.ip, forKey: homeGatewayIPKey)
-            mijiaLog("[Location] 已記錄居家網路閘道: IP=\(gateway.ip ?? "nil"), MAC=\(mac)")
+            mijiaLog("[Location] 已記錄居家網路閘道")
         }
 
         // 2. 抓取目前 GPS/Wi-Fi 定位座標
@@ -206,7 +206,7 @@ final class LocationGatekeeper: NSObject, CLLocationManagerDelegate {
     private func saveHomeCoordinate(_ coord: CLLocationCoordinate2D) {
         UserDefaults.standard.set(coord.latitude, forKey: homeLatKey)
         UserDefaults.standard.set(coord.longitude, forKey: homeLonKey)
-        mijiaLog("[Location] 居家座標已儲存: \(coord.latitude), \(coord.longitude)")
+        mijiaLog("[Location] 居家座標已儲存")
     }
 
     func clearHomeLocation() {
@@ -268,7 +268,7 @@ final class LocationGatekeeper: NSObject, CLLocationManagerDelegate {
                 // 自動學習並更新閘道 MAC (若尚未綁定)
                 if self.homeGatewayMAC == nil, let currentMAC = getCurrentGatewayInfo().mac {
                     self.homeGatewayMAC = currentMAC
-                    mijiaLog("[WiFi] 自動學習並鎖定 Wi-Fi 閘道 MAC: \(currentMAC)")
+                    mijiaLog("[WiFi] 自動學習並鎖定 Wi-Fi 閘道")
                 }
                 return true
             }
@@ -302,9 +302,9 @@ final class LocationGatekeeper: NSObject, CLLocationManagerDelegate {
 
             let matches = isConnectedToTargetWiFi()
             if matches {
-                updateHomeState(isHome: true, reason: "已連上指定 Wi-Fi (\(target))")
+                updateHomeState(isHome: true, reason: "已連上指定 Wi-Fi")
             } else {
-                updateHomeState(isHome: false, reason: "未連線至指定 Wi-Fi (\(target))")
+                updateHomeState(isHome: false, reason: "未連線至指定 Wi-Fi")
             }
             return
         }
@@ -321,7 +321,7 @@ final class LocationGatekeeper: NSObject, CLLocationManagerDelegate {
         // 1. 優先檢查是否連在居家網路閘道上
         let gateway = getCurrentGatewayInfo()
         if let homeMAC = homeGatewayMAC, let currentMAC = gateway.mac, homeMAC == currentMAC {
-            updateHomeState(isHome: true, reason: "連線至居家網路閘道 (\(currentMAC))")
+            updateHomeState(isHome: true, reason: "連線至居家網路閘道")
             return
         }
 

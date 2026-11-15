@@ -26,7 +26,9 @@ class UrlTests(unittest.TestCase):
     def test_trusted(self):
         self.assertTrue(is_trusted_release_url(BASE + "linux-v1.2.0"))
         for bad in ("http://github.com/liaw-boy/mijia-temp-bar/x", "https://evil.example/liaw-boy/mijia-temp-bar/x",
-                    "https://github.com/other/repo/x", "https://github.com.evil.example/liaw-boy/mijia-temp-bar/x"):
+                    "https://github.com/other/repo/x", "https://github.com.evil.example/liaw-boy/mijia-temp-bar/x",
+                    BASE + "../../../evil/x", BASE + "%2e%2e/%2e%2e/%2e%2e/evil/x",
+                    "https://github.com:8443/liaw-boy/mijia-temp-bar/releases/tag/x"):
             self.assertFalse(is_trusted_release_url(bad), bad)
 
 

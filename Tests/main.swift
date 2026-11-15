@@ -321,6 +321,30 @@ do {
     check(NetworkSignature.isVirtualInterface("utun4") && NetworkSignature.isVirtualInterface("ipsec0") && !NetworkSignature.isVirtualInterface("en0"), "VPN 虛擬介面")
 }
 
+// MARK: - 更新檢查 (只認 v 前綴，忽略 linux-v、草稿、預覽版與外部網址)
+do {
+    let repo = "example/repo"
+    func rel(_ tag: String, draft: Bool = false, pre: Bool = false, url: String? = nil) -> [String: Any] {
+        ["tag_name": tag, "draft": draft, "prerelease": pre, "html_url": url ?? "https://github.com/\(repo)/releases/tag/\(tag)"]
+    }
+    func version(_ s: UpdateStatus) -> String? {
+        if case .available(let v, _) = s { return v }
+        return nil
+    }
+    let list = [rel("linux-v9.0.0"), rel("v1.9.0"), rel("v1.10.0"), rel("v2.0.0", draft: true), rel("v3.0.0", pre: true),
+                rel("v4.0.0", url: "https://evil.example/x"), rel("vnext"),
+                rel("v5.0.0", url: "https://github.com/\(repo)/../../evil/x"),
+                rel("v6.0.0", url: "https://github.com/\(repo)/%2e%2e/%2e%2e/evil/x")]
+    check(version(UpdateChecker.pickLatest(list, current: "1.9.0", repo: repo)) == "1.10.0", "挑出最新的 macOS 版")
+    check(version(UpdateChecker.pickLatest([rel("linux-v9.0.0")], current: "1.9.0", repo: repo)) == nil, "Linux 版不算")
+    check(version(UpdateChecker.pickLatest(list, current: "1.10.0", repo: repo)) == nil, "已是最新")
+    if case .failed = UpdateChecker.pickLatest(["tag_name": "v1"], current: "1.0", repo: repo) {
+        check(true, "格式錯誤")
+    } else {
+        check(false, "格式錯誤")
+    }
+}
+
 try? FileManager.default.removeItem(at: testRoot)
 print("通過 \(passed) 項，失敗 \(failures) 項")
 exit(failures == 0 ? 0 : 1)

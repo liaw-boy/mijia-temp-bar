@@ -18,6 +18,7 @@ SWIFTC="${SWIFTC:-swiftc}"
     Sources/DeviceDiscovery.swift \
     Sources/StatusFile.swift \
     Sources/NetworkSignature.swift \
+    Sources/UpdateChecker.swift \
     Tests/Stubs.swift \
     Tests/main.swift \
     -o "$OUT"

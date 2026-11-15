@@ -171,6 +171,21 @@ class DeviceStoreMigrationTests(unittest.TestCase):
         self.assertFalse(self.settings.data["LegacyHistoryUnclaimed"])
         self.assertEqual(store.primary_id, B)
 
+    def test_unclaimed_history_skips_device_that_already_has_history(self):
+        self.legacy_history.write_text("[9]", encoding="utf-8")
+        self.history_dir.mkdir()
+        (self.history_dir / "A4C138001122.json").write_text("[1]", encoding="utf-8")
+        store = self.make_store({})
+        store.migrate()
+
+        store.add([Device(B, "臥室", KIND_BROADCAST)])
+        self.assertEqual((self.history_dir / "A4C138001122.json").read_text(encoding="utf-8"), "[1]")
+        self.assertTrue(self.settings.data["LegacyHistoryUnclaimed"])  # 留給下一台
+
+        store.add([Device(A, "客廳", KIND_BROADCAST)])
+        self.assertEqual((self.history_dir / "A4C1388C9B32.json").read_text(encoding="utf-8"), "[9]")
+        self.assertFalse(self.settings.data["LegacyHistoryUnclaimed"])
+
 
 class DeviceStoreOperationTests(unittest.TestCase):
     def setUp(self):

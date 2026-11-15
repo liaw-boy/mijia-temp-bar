@@ -38,7 +38,8 @@ final class UpdateChecker {
 
     /// 結果一律在主執行緒回呼
     func check(completion: @escaping (UpdateStatus) -> Void) {
-        guard let apiURL = URL(string: "https://api.github.com/repos/\(repo)/releases/latest") else { return }
+        // 讀 releases 清單自己挑 v 前綴的版本，不用 /releases/latest：同一個 repo 也發 linux-v 版，可能被設成 Latest
+        guard let apiURL = URL(string: "https://api.github.com/repos/\(repo)/releases?per_page=30") else { return }
         var request = URLRequest(url: apiURL, timeoutInterval: 10)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("MijiaTempBar/\(currentVersion)", forHTTPHeaderField: "User-Agent")
@@ -61,22 +62,38 @@ final class UpdateChecker {
         guard let http = response as? HTTPURLResponse else { return .failed("無法取得版本資訊") }
         if http.statusCode == 404 { return .upToDate(current: currentVersion) } // 尚未發佈任何版本
         guard http.statusCode == 200, let data = data,
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let tag = json["tag_name"] as? String,
-              let htmlString = json["html_url"] as? String,
-              let url = URL(string: htmlString),
-              Self.isTrustedReleaseURL(url, repo: repo) else {
+              let json = try? JSONSerialization.jsonObject(with: data) else {
             return .failed("版本資訊格式不正確")
         }
-        let latest = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
-        return Self.isNewer(latest, than: currentVersion)
-            ? .available(version: latest, url: url)
-            : .upToDate(current: currentVersion)
+        return Self.pickLatest(json, current: currentVersion, repo: repo)
+    }
+
+    /// 從 releases 清單挑出 macOS 版 (v 加數字開頭，排除 linux-v、草稿與預覽版) 中最新的一筆並與目前版本比對
+    static func pickLatest(_ json: Any, current: String, repo: String) -> UpdateStatus {
+        guard let releases = json as? [[String: Any]] else { return .failed("版本資訊格式不正確") }
+        var best: (version: String, url: URL)?
+        for item in releases {
+            guard item["draft"] as? Bool != true, item["prerelease"] as? Bool != true,
+                  let tag = item["tag_name"] as? String, tag.hasPrefix("v"),
+                  tag.dropFirst().first?.isNumber == true,
+                  let htmlString = item["html_url"] as? String, let url = URL(string: htmlString),
+                  isTrustedReleaseURL(url, repo: repo) else { continue }
+            let version = String(tag.dropFirst())
+            if best == nil || isNewer(version, than: best!.version) {
+                best = (version, url)
+            }
+        }
+        if let best = best, isNewer(best.version, than: current) {
+            return .available(version: best.version, url: best.url)
+        }
+        return .upToDate(current: current)
     }
 
     /// 只接受本專案 GitHub 頁面，避免被導向其他網址
     static func isTrustedReleaseURL(_ url: URL, repo: String) -> Bool {
-        url.scheme == "https" && url.host == "github.com" && url.path.hasPrefix("/\(repo)/")
+        // 擋掉 ..：瀏覽器會把 /<repo>/../../x 正規化成別人的頁面 (url.path 已解開百分比編碼)
+        url.scheme == "https" && url.host == "github.com" && url.port == nil && url.user == nil
+            && url.path.hasPrefix("/\(repo)/") && !url.path.split(separator: "/").contains("..")
     }
 
     /// 逐段比較數字版本 (1.10.0 > 1.9.2)；無法解析的段視為 0

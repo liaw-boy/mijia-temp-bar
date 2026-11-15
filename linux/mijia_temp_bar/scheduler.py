@@ -130,8 +130,8 @@ class PollEngine:
         current = self._runtimes.get(self._current_id) if self._current_id else None
         if (self._current is not None and self._current_id not in targets
                 and current is not None and (current.failures > 0 or current.was_failing)):
-            self._preempted = True
-            self._current.cancel()
+            # 讀取剛好已結束時 cancel() 回傳 False，不能留下旗標，否則之後關閉時的取消會被當成插隊吞掉
+            self._preempted = self._current.cancel()
         self._wake.set()
 
     def reprobe(self) -> None:

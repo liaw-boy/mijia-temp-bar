@@ -11,7 +11,7 @@ import time
 import urllib.error
 import urllib.request
 from typing import Callable, NamedTuple, Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from . import __version__
 from .settings import settings
@@ -54,7 +54,10 @@ def is_newer(candidate: str, current: str) -> bool:
 def is_trusted_release_url(url: str) -> bool:
     """只接受本專案 GitHub 頁面 (https)，避免被導向其他網址。"""
     parsed = urlparse(url)
-    return parsed.scheme == "https" and parsed.hostname == "github.com" and parsed.path.startswith(f"/{REPO}/releases/")
+    path = unquote(parsed.path)
+    # 擋掉 ..：瀏覽器會把 /<repo>/releases/../../x 正規化成別人的頁面
+    return (parsed.scheme == "https" and parsed.hostname == "github.com" and parsed.port is None
+            and parsed.username is None and path.startswith(f"/{REPO}/releases/") and ".." not in path.split("/"))
 
 
 def pick_latest(releases, current: str) -> UpdateResult:
