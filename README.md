@@ -114,12 +114,20 @@ CR2032 鈕扣電池在壽命末期（電壓跌破 2.60V）會進入斷崖式崩�
 - **進門回家自動喚醒 (Home Mode)**：走入家門範圍或連回家中 Wi-Fi 瞬間，1 秒內自動喚醒藍牙連線，狀態列無感浮現最新數值！
 - **離線指數退避 (Exponential Backoff)**：若在家中短暫將筆電移至藍牙死角，自動啟動 60 秒 $\to$ 300 秒 $\to$ 900 秒階梯退避，徹底杜絕藍牙空轉耗電！
 
+### 多台溫濕度計
+- 右鍵選單（Linux 為系統匣選單）或設定分頁的「**搜尋新裝置…**」掃描約 20 秒，勾選後加入；**不會自動加入鄰居的溫濕度計**。全新安裝時會自動開啟搜尋視窗。
+- 狀態列顯示一台「**主裝置**」；選單第一層列出每一台的溫濕度，**直接點就切換狀態列顯示哪一台**（✓ 為主裝置）。「管理裝置」子選單裡可看每台的電量與狀態、立即更新、改名、移除（移除不刪歷史紀錄）。
+- **帶筆電換地方**：主裝置不在附近、但別台在附近時，狀態列自動改顯示附近那台（不改你選的主裝置，回到主裝置附近就換回來）。電腦從睡眠喚醒或換到另一個網路（預設閘道不同）時，所有裝置立刻重新偵測一次，不必等下一次更新間隔；VPN、AirDrop 等虛擬介面的變動不算，避免多耗溫濕度計電池。
+- 儀表板標題改為裝置下拉選單（只決定儀表板看哪一台），旁邊的「設為狀態列」按鈕才會改主裝置；卡片、圖表、CSV 匯出與「立即更新」都跟著所選裝置。對某台按「立即更新」時，若正在重試另一台連不到的裝置，會先中斷那次重試讓它插隊。
+- 每台的讀取、歷史、離線退避與通知各自獨立；一次只連一台，一台連不到不會拖慢其他台。低電量與濕度通知的標題帶裝置名稱。
+- 從單一裝置版本升級時，原本那台自動成為第一台裝置與主裝置，舊歷史複製到新的每台歷史檔；舊設定與舊檔都保留不動。
+
 ### 原廠出廠與開源韌體雙模自動相容
 - **原廠官方韌體**：免刷機、出廠即用，直接透過 BLE GATT 協議精準讀取。
 - **開源自製韌體**：自動嗅探並解析 ATC1441、pvvx、BTHome v2 廣播封包。
 
 ### 智慧隱藏與自動秒連
-- 啟用「**僅連線時顯示**」後，帶著筆電外出或超出藍牙範圍時，選單列圖示會**自動完全隱藏**，保持桌面乾淨。
+- 啟用「**僅連線時顯示**」後，帶著筆電外出、**所有裝置**都超出藍牙範圍時，選單列圖示會**自動完全隱藏**，保持桌面乾淨；未啟用時則顯示 `--`。
 - 回到室內藍牙範圍內，數秒內**自動無感重連並重新浮現**。
 - 啟動瞬間先讀取本機快取數據，徹底消除選單列閃爍。
 
@@ -134,7 +142,7 @@ CR2032 鈕扣電池在壽命末期（電壓跌破 2.60V）會進入斷崖式崩�
 | **macOS** | Swift 6 + AppKit + CoreBluetooth | `NSStatusItem` | CoreGraphics 向量圖形 |
 | **Linux** | Python 3.10+ + BlueZ + bleak | Ayatana AppIndicator (SNI) | GTK 3 + Cairo + Pango |
 
-兩者功能保持 100% 一致（5 種狀態列樣式、即時儀表板、綜合折線圖、CSV 匯出、省電輪詢）。
+兩者功能保持 100% 一致（多台裝置、5 種狀態列樣式、即時儀表板、綜合折線圖、CSV 匯出、省電輪詢、登入時自動啟動）。
 
 ---
 
@@ -155,10 +163,12 @@ cd mijia-temp-bar
 ./bundle.sh
 open MijiaTempBar.app
 ```
+純邏輯單元測試（解析、退避排程、裝置清單、遷移、通知規則）：`./test_mac.sh`
 
 #### 開機自動啟動 (Launch at Login)
-1. 打開 Mac **系統設定** > **一般** > **登入項目與擴充功能**。
-2. 在「**登入時打開**」區域點擊 `+` 號，選取 `MijiaTempBar.app` 即可。
+1. 先把 `MijiaTempBar.app` 放到 `/Applications`（應用程式）資料夾並從那裡開啟。
+2. 在儀表板的「**設定**」分頁 > 「狀態列」勾選「**登入時自動啟動**」。macOS 13 以上使用系統登入項目（若系統要求核准，會自動開啟「登入項目」設定頁）；macOS 12 則在 `~/Library/LaunchAgents` 建立啟動設定檔。
+3. 以前用「系統設定 > 登入項目」手動加過的話，請把手動加的那筆移除，避免重複（重複啟動時第二個會自動結束）。
 
 ---
 
@@ -210,9 +220,25 @@ cd mijia-temp-bar/linux
 mijia-temp-bar/
 ├── Sources/                          # macOS 原生 Swift 原始碼
 │   ├── main.swift                    # AppKit 生命週期與常駐模式進入點
-│   ├── StatusBarController.swift     # 狀態列介面、雙行微型膠囊渲染、點擊彈出儀表板面板
-│   ├── BluetoothManager.swift        # CoreBluetooth 藍牙搜尋、即連即斷省電讀取、廣播解析
-│   ├── DashboardWindowController.swift # 即時儀表板視窗、硬體渲染卡片、舒適度評估
+│   ├── StatusBarController.swift     # 狀態列介面、多裝置狀態協調、點擊彈出儀表板面板
+│   ├── StatusItemRenderer.swift      # 雙行微型膠囊與各樣式的狀態列圖示 (連不到時顯示 --)
+│   ├── BluetoothManager.swift        # CoreBluetooth 多裝置輪詢 (一次一台)、掃描與搜尋新裝置
+│   ├── AdvertisementParser.swift     # 原廠 GATT / ATC / pvvx / BTHome 解析 (純函式)
+│   ├── DeviceStore.swift             # 裝置清單、主裝置、絕不覆寫的檔案複製
+│   ├── Migration.swift               # 單一裝置設定 → 裝置清單 (只新增、不改舊檔)
+│   ├── Backoff.swift                 # 離線退避與輪詢排程規則
+│   ├── DeviceDiscovery.swift         # 搜尋候選分類與排序
+│   ├── DeviceMenuBuilder.swift       # 右鍵選單的裝置區段、改名與移除對話框
+│   ├── DeviceSearchWindowController.swift # 搜尋新裝置視窗 (掃描 → 勾選加入)
+│   ├── SensorModels.swift            # 讀數、每台狀態與顯示規則
+│   ├── AlertPolicies.swift           # 低電量冷卻與濕度警示規則 (每台各自計算)
+│   ├── StatusFile.swift              # 即時狀態 JSON (頂層為狀態列顯示的那台 + devices 陣列)
+│   ├── LoginItemManager.swift        # 登入時自動啟動 (SMAppService / LaunchAgent)
+│   ├── SingleInstance.swift          # 單一實例保護
+│   ├── ReprobeTriggers.swift         # 喚醒、換網路時重新偵測 (換地方時改顯示附近那台)
+│   ├── NetworkSignature.swift        # 比對預設閘道判斷是否換網路 (VPN 等虛擬介面變動不算)
+│   ├── DashboardWindowController.swift # 即時儀表板視窗、裝置切換、硬體渲染卡片、舒適度評估
+│   ├── DashboardSettingsPane.swift   # 儀表板的設定分頁
 │   ├── DeviceView.swift              # 隨數據變化的裝置示意圖 (程式繪製)
 │   ├── ChartView.swift               # CoreGraphics 雙 Y 軸、三線走勢圖、時間比例 X 軸、HUD 氣泡
 │   ├── HistoryManager.swift          # 歷史資料持久化、JSON 儲存、CSV 匯出
@@ -222,13 +248,14 @@ mijia-temp-bar/
 │   └── Logger.swift                  # 輕量本機除錯日誌 (~/Library/Logs/MijiaTempBar)
 ├── generate_icon.swift               # Google Stitch Vibe Design 原生圖示生成腳本
 ├── bundle.sh                         # 一鍵編譯、資源打包與 Ad-hoc 本機簽名腳本
+├── test_mac.sh / Tests/              # macOS 純邏輯單元測試 (不需要 AppKit)
 ├── linux/                            # Linux 移植版本 (Python + GTK + AppIndicator + BlueZ)
 │   ├── README.md                     # Linux 版專屬使用與架構手冊
 │   ├── install.sh / uninstall.sh     # Linux 一鍵安裝與解除安裝腳本
 │   ├── requirements.txt              # Python 套件清單 (bleak)
 │   ├── mijia_temp_bar/               # Linux 核心模組 (對應 macOS 各 Swift 元件)
 │   ├── screenshots/                  # Linux 介面截圖
-│   └── tests/                        # 單元測試 (廣播解析、歷史紀錄)
+│   └── tests/                        # 單元測試 (解析、裝置清單、遷移、排程、搜尋、通知)
 ├── LICENSE                           # MIT 開源授權
 └── README.md                         # 專案主說明文件
 ```

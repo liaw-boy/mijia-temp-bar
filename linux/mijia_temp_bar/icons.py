@@ -111,10 +111,19 @@ def _panel_surface(width: float) -> Tuple[cairo.ImageSurface, cairo.Context]:
 
 # MARK: - 狀態列樣式
 
-def render_stats_badge(temp: float, hum: float) -> cairo.ImageSurface:
+def format_temp(temp: Optional[float]) -> str:
+    """溫度數字 (一位小數)；沒有數值 (裝置連不到) 時為 --。"""
+    return "--" if temp is None else f"{temp:.1f}"
+
+
+def format_hum(hum: Optional[float]) -> str:
+    return "--" if hum is None else f"{hum:.0f}"
+
+
+def render_stats_badge(temp: Optional[float], hum: Optional[float]) -> cairo.ImageSurface:
     """[TMP] / [HUM] 雙行微型膠囊樣式 (上下貼滿 24px)。"""
-    top_val = f"{temp:.1f}°"
-    bottom_val = f"{hum:.0f}%"
+    top_val = f"{format_temp(temp)}°"
+    bottom_val = f"{format_hum(hum)}%"
 
     badge_w, badge_h, badge_r, gap = 25.0, 10.5, 2.5, 4.5
     top_badge_y = 1.0
@@ -144,9 +153,9 @@ def render_stats_badge(temp: float, hum: float) -> cairo.ImageSurface:
     return surface
 
 
-def render_stacked(temp: float, hum: float) -> cairo.ImageSurface:
+def render_stacked(temp: Optional[float], hum: Optional[float]) -> cairo.ImageSurface:
     """純數字雙行堆疊 (上下吃滿版)。"""
-    lines = (f"{temp:.1f}°", f"{hum:.0f}%")
+    lines = (f"{format_temp(temp)}°", f"{format_hum(hum)}%")
     m = _measure_context()
     widths = [layout_size(make_layout(m, t, 11.0, Pango.Weight.BOLD, tabular=True))[0] for t in lines]
     surface, cr = _panel_surface(max(widths) + 6.0)

@@ -4,36 +4,26 @@ import UserNotifications
 final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationManager()
 
-    // 提醒門檻：電量 <= 15% 或 電壓 <= 2.60V (進入 CR2032 斷崖崩塌期)
-    private let lowBatteryThreshold = 15
-    private let lowVoltageThreshold = 2.60
-    private let cooldownSeconds: TimeInterval = 86400 // 24 小時冷卻，避免狂轟濫炸
-    private let lastAlertKey = "LastLowBatteryNotificationDate"
+    // 低電量提醒 (電量 <= 15% 或電壓 <= 2.60V) 與濕度警示：每台裝置各自的冷卻與狀態，規則見 AlertPolicies.swift
     private let enabledKey = "LowBatteryNotificationEnabled"
-
-    // 濕度警示：高於上限或低於下限時通知；回到範圍內 (含 2% 緩衝) 才重新武裝，持續超標則每 3 小時再提醒一次
     private let humidityEnabledKey = "HumidityAlertEnabled"
     private let humidityHighKey = "HumidityHighThreshold"
     private let humidityLowKey = "HumidityLowThreshold"
-    private let humidityRepeatSeconds: TimeInterval = 3 * 3600
-    private let humidityHysteresis = 2.0
-    private enum HumidityState { case normal, high, low }
-    private var humidityState: HumidityState = .normal
-    private var lastHumidityAlert: Date?
+    private var humidityMonitors: [String: HumidityMonitor] = [:]
 
     var isHumidityAlertEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: humidityEnabledKey) } // 預設關閉
-        set { UserDefaults.standard.set(newValue, forKey: humidityEnabledKey); humidityState = .normal }
+        set { UserDefaults.standard.set(newValue, forKey: humidityEnabledKey); humidityMonitors.removeAll() }
     }
 
     var humidityHigh: Int {
         get { UserDefaults.standard.object(forKey: humidityHighKey) as? Int ?? 70 }
-        set { UserDefaults.standard.set(newValue, forKey: humidityHighKey); humidityState = .normal }
+        set { UserDefaults.standard.set(newValue, forKey: humidityHighKey); humidityMonitors.removeAll() }
     }
 
     var humidityLow: Int {
         get { UserDefaults.standard.object(forKey: humidityLowKey) as? Int ?? 30 }
-        set { UserDefaults.standard.set(newValue, forKey: humidityLowKey); humidityState = .normal }
+        set { UserDefaults.standard.set(newValue, forKey: humidityLowKey); humidityMonitors.removeAll() }
     }
 
     var isEnabled: Bool {
@@ -63,71 +53,42 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    func checkReading(_ reading: SensorReading) {
-        checkHumidity(reading)
+    /// 依這台裝置的讀數決定是否發出低電量與濕度通知
+    func checkReading(_ reading: SensorReading, deviceID: String, deviceName: String) {
+        checkHumidity(reading, deviceID: deviceID, deviceName: deviceName)
         guard isEnabled else { return }
 
-        let isLow = reading.batteryPercent <= lowBatteryThreshold || reading.voltage <= lowVoltageThreshold
-
-        guard isLow else {
-            // 若換了新電池 (電量恢復至 30% 以上)，重置冷卻記錄
-            if reading.batteryPercent > 30 {
-                UserDefaults.standard.removeObject(forKey: lastAlertKey)
-            }
-            return
+        var dates = UserDefaults.standard.dictionary(forKey: DeviceKeys.lowBatteryDates) as? [String: Date] ?? [:]
+        let last = dates[deviceID]
+        let decision = LowBatteryPolicy.next(lastAlert: last, percent: reading.batteryPercent, voltage: reading.voltage, now: Date())
+        if decision.lastAlert != last {
+            dates[deviceID] = decision.lastAlert
+            UserDefaults.standard.set(dates, forKey: DeviceKeys.lowBatteryDates)
         }
+        guard decision.notify else { return }
 
-        // 檢查 24 小時冷卻防干擾機制
-        if let lastDate = UserDefaults.standard.object(forKey: lastAlertKey) as? Date {
-            let elapsed = Date().timeIntervalSince(lastDate)
-            if elapsed < cooldownSeconds {
-                return // 冷卻期間內，暫不重複通知
-            }
-        }
-
-        // 發送通知並更新時間戳
-        sendLowBatteryNotification(percent: reading.batteryPercent, voltage: reading.voltage)
-        UserDefaults.standard.set(Date(), forKey: lastAlertKey)
+        let body = String(format: "%@ 目前電量僅剩 %d%% (%.3f V)，已進入斷崖放電期。建議您盡速備妥並更換 CR2032 鈕扣電池，以確保溫濕度監控不中斷。",
+                          deviceName, reading.batteryPercent, reading.voltage)
+        mijiaLog("[Notification] 觸發低電量通知 [\(deviceID)]: \(reading.batteryPercent)%, \(reading.voltage)V")
+        send(identifier: "MijiaTempBar.LowBattery.\(deviceID)", title: "\(deviceName) - 低電量提醒 🔋⚠️",
+             subtitle: "CR2032 鈕扣電池電量即將耗盡", body: body)
     }
 
-    private func checkHumidity(_ reading: SensorReading) {
+    private func checkHumidity(_ reading: SensorReading, deviceID: String, deviceName: String) {
         guard isHumidityAlertEnabled else { return }
-        let hum = reading.humidity
-        let high = Double(humidityHigh)
-        let low = Double(humidityLow)
+        var monitor = humidityMonitors[deviceID] ?? HumidityMonitor()
+        let level = monitor.check(humidity: reading.humidity, high: Double(humidityHigh), low: Double(humidityLow), now: Date())
+        humidityMonitors[deviceID] = monitor
+        guard let level = level else { return }
 
-        let current: HumidityState = hum > high ? .high : (hum < low ? .low : .normal)
-        if current == .normal {
-            // 回到範圍內並越過緩衝區才重新武裝，避免在門檻附近來回觸發
-            if hum <= high - humidityHysteresis && hum >= low + humidityHysteresis {
-                humidityState = .normal
-                lastHumidityAlert = nil
-            }
-            return
-        }
-
-        let isNewExcursion = (current != humidityState)
-        let repeatDue = lastHumidityAlert.map { Date().timeIntervalSince($0) >= humidityRepeatSeconds } ?? true
-        guard isNewExcursion || repeatDue else { return }
-
-        humidityState = current
-        lastHumidityAlert = Date()
-        let body = current == .high
-            ? String(format: "目前濕度 %.0f%%，高於設定的上限 %d%%。", hum, humidityHigh)
-            : String(format: "目前濕度 %.0f%%，低於設定的下限 %d%%。", hum, humidityLow)
-        mijiaLog("[Notification] 濕度警示: \(body)")
-        send(identifier: "MijiaTempBar.Humidity",
-             title: current == .high ? "米家溫濕度計 2 - 濕度過高" : "米家溫濕度計 2 - 濕度過低",
+        let high = level == .high
+        let body = high
+            ? String(format: "%@ 目前濕度 %.0f%%，高於設定的上限 %d%%。", deviceName, reading.humidity, humidityHigh)
+            : String(format: "%@ 目前濕度 %.0f%%，低於設定的下限 %d%%。", deviceName, reading.humidity, humidityLow)
+        mijiaLog("[Notification] 濕度警示 [\(deviceID)]: \(body)")
+        send(identifier: "MijiaTempBar.Humidity.\(deviceID)",
+             title: high ? "\(deviceName) - 濕度過高" : "\(deviceName) - 濕度過低",
              subtitle: "濕度警示", body: body)
-    }
-
-    private func sendLowBatteryNotification(percent: Int, voltage: Double) {
-        let title = "米家溫濕度計 2 - 低電量提醒 🔋⚠️"
-        let subtitle = "CR2032 鈕扣電池電量即將耗盡"
-        let body = String(format: "目前電量僅剩 %d%% (%.3f V)，已進入斷崖放電期。建議您盡速備妥並更換 CR2032 鈕扣電池，以確保溫濕度監控不中斷。", percent, voltage)
-
-        mijiaLog("[Notification] 觸發低電量通知: \(percent)%, \(voltage)V")
-        send(identifier: "MijiaTempBar.LowBattery", title: title, subtitle: subtitle, body: body)
     }
 
     private func send(identifier: String, title: String, subtitle: String, body: String) {
@@ -142,7 +103,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
             UNUserNotificationCenter.current().add(request) { error in
                 if let error = error {
                     mijiaLog("[Notification] UNUserNotificationCenter 發送失敗: \(error.localizedDescription)，改用系統備用通知方案")
-                    self.fallbackNotify(title: title, body: body)
+                    DispatchQueue.main.async { self.fallbackNotify(title: title, body: body) }
                 }
             }
         } else {

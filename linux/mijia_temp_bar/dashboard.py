@@ -1,6 +1,7 @@
-"""彈出式儀表板：標頭 (即時裝置示意圖)、數據圖表分頁與設定分頁。
+"""彈出式儀表板：標頭 (裝置切換與即時裝置示意圖)、數據圖表分頁與設定分頁。
 
 從系統匣選單開啟，貼近滑鼠位置顯示；點視窗外面 (失去焦點) 或按 Esc 會收起。
+每次開啟都先選主裝置；卡片、圖表、匯出與立即更新都跟著目前選的裝置。
 """
 
 import time
@@ -17,6 +18,7 @@ from gi.repository import Gdk, GdkPixbuf, GLib, Gtk, Pango  # noqa: E402
 from . import autostart, notifications, update_check  # noqa: E402
 from .chart import ChartDataType, ChartView  # noqa: E402
 from .device_view import create_device_view  # noqa: E402
+from .devices import KIND_STOCK, file_id  # noqa: E402
 from .history import HistoryManager  # noqa: E402
 from .icons import render_app_icon  # noqa: E402
 from .logger import mijia_log  # noqa: E402
@@ -30,6 +32,7 @@ from .options import (  # noqa: E402
 )
 from . import __version__  # noqa: E402
 from .parsers import SensorReading  # noqa: E402
+from .settings_devices import DevicesSection  # noqa: E402
 
 CSS = b"""
 .mijia-dashboard { background-color: #15171c; border: 1px solid rgba(255, 255, 255, 0.14); }
@@ -84,13 +87,16 @@ def _pixbuf_from_surface(surface) -> GdkPixbuf.Pixbuf:
 PANEL_WIDTH = 660
 ROW_HEIGHT = 52          # 設定列固定高度
 ROW_INSET = 16           # 設定列左右內距 (標題、說明、區塊標題共用同一條左邊界)
+STATUS_COLORS = {True: "#40e080", None: "#59bfff", False: "#ffa633"}  # 可連線 / 尚未確認 / 連不到
 
 
 class DashboardWindow(Gtk.Window):
     def __init__(self, controller):
-        super().__init__(title="米家溫濕度計 2")
+        super().__init__(title="米家溫濕度計")
         _install_css()
         self.controller = controller
+        self.selected_id: Optional[str] = None
+        self._device_ids: List[str] = []
         self._busy = False        # 開啟對話框時不因失去焦點而收起
         self._loading = False     # 同步設定值時不觸發變更事件
         self._focus_timer: Optional[int] = None
@@ -120,12 +126,13 @@ class DashboardWindow(Gtk.Window):
         container.pack_start(self._build_header(), False, False, 0)
         container.pack_start(self.stack, True, True, 0)
         container.show_all()
-        self.reload_data()
+        self.reload_devices()
         self.reload_settings()
 
     # MARK: - 彈出與收起
 
     def show_near_pointer(self, tab: str = "dashboard") -> None:
+        self.select_device(self.controller.primary_id)
         self.stack.set_visible_child_name(tab)
         if tab == "settings":
             self.reload_settings()
@@ -155,6 +162,14 @@ class DashboardWindow(Gtk.Window):
             self.hide()
         return GLib.SOURCE_REMOVE
 
+    def run_busy(self, fn: Callable[[], None]) -> None:
+        """開啟對話框期間不因失去焦點而收起儀表板。"""
+        self._busy = True
+        try:
+            fn()
+        finally:
+            self._busy = False
+
     def _on_key_press(self, _widget, event) -> bool:
         if event.keyval == Gdk.KEY_Escape:
             self.hide()
@@ -174,10 +189,19 @@ class DashboardWindow(Gtk.Window):
         titles = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         titles.set_valign(Gtk.Align.CENTER)
         title_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        title_row.pack_start(_label("米家藍牙溫濕度計 2", "header-title"), False, False, 0)
-        badge = _label("LYWSD03MMC", "model-badge")
-        badge.set_valign(Gtk.Align.CENTER)
-        title_row.pack_start(badge, False, False, 0)
+        self.device_combo = Gtk.ComboBoxText()
+        self.device_combo.set_tooltip_text("選擇要查看的裝置")
+        self.device_combo.connect("changed", self._handle_device_changed)
+        title_row.pack_start(self.device_combo, False, False, 0)
+        # 下拉選單只決定儀表板看哪一台；按這個按鈕才改狀態列顯示的主裝置
+        self.primary_button = Gtk.Button(label="設為狀態列")
+        self.primary_button.set_no_show_all(True)  # 沒有裝置時保持隱藏 (show_all 不會把它打開)
+        self.primary_button.set_size_request(104, -1)  # 固定寬度：換標籤時面板不會跟著變寬
+        self.primary_button.set_valign(Gtk.Align.CENTER)
+        self.primary_button.connect("clicked", lambda _b: self._make_selected_primary())
+        title_row.pack_start(self.primary_button, False, False, 0)
+        # 型號標章的位置讓給按鈕 (連線模式在系統匣選單的「管理裝置」裡看得到)
+        self.model_badge = _label("LYWSD03MMC", "model-badge")
         titles.pack_start(title_row, False, False, 0)
         self.status_label = _label("● 搜尋中", "status-dot")
         self.status_label.set_ellipsize(Pango.EllipsizeMode.END)
@@ -191,17 +215,85 @@ class DashboardWindow(Gtk.Window):
         header.pack_end(switcher, False, False, 0)
         return header
 
-    def update_status(self, text: str) -> None:
-        self.status_label.set_text(f"● {text}")
-        if "正常" in text or "休眠" in text:
-            color = "#40e080"
-        elif "連線中" in text or "搜尋" in text or "讀取" in text:
-            color = "#59bfff"
+    def refresh_status(self) -> None:
+        """依目前選的裝置與藍牙狀態更新標頭的連線狀態 (顏色依可否連線)。"""
+        c = self.controller
+        if self.selected_id is None:
+            text, reachable = "尚未加入裝置，請到「設定」搜尋新裝置", None
+        elif c.adapter_status:
+            text, reachable = c.adapter_status, False
+            if c.adapter_hint:
+                text += f" · {c.adapter_hint}"
         else:
-            color = "#ffa633"
-        self.status_label.set_markup(
-            f'<span foreground="{color}">{GLib.markup_escape_text(self.status_label.get_text())}</span>'
-        )
+            state = c.state_for(self.selected_id)
+            text, reachable = state.status, state.reachable
+        markup = GLib.markup_escape_text(f"● {text}")
+        self.status_label.set_markup(f'<span foreground="{STATUS_COLORS[reachable]}">{markup}</span>')
+        self.status_label.set_tooltip_text(text)
+
+    # MARK: - 裝置切換
+
+    def reload_devices(self) -> None:
+        """裝置清單變動：重建下拉選單 (保留目前選擇，被移除時改選主裝置) 與設定分頁的裝置區塊。"""
+        devices = self.controller.devices
+        self._device_ids = [d.id for d in devices]
+        self._loading = True
+        try:
+            self.device_combo.remove_all()
+            for device in devices:
+                self.device_combo.append_text(device.name)
+            if not devices:
+                self.device_combo.append_text("尚未加入裝置")
+        finally:
+            self._loading = False
+        keep = self.selected_id if self.selected_id in self._device_ids else self.controller.primary_id
+        self.select_device(keep)
+        self.devices_section.reload()
+
+    def select_device(self, device_id: Optional[str]) -> None:
+        self.selected_id = device_id if device_id in self._device_ids else None
+        self._loading = True
+        try:
+            index = self._device_ids.index(self.selected_id) if self.selected_id else 0
+            self.device_combo.set_active(index)
+            self.device_combo.set_sensitive(bool(self._device_ids))
+        finally:
+            self._loading = False
+        self._apply_selected_state()
+
+    def _make_selected_primary(self) -> None:
+        if self.selected_id is not None:
+            self.controller.set_primary(self.selected_id)
+
+    def _handle_device_changed(self, combo: Gtk.ComboBoxText) -> None:
+        index = combo.get_active()
+        if self._loading or not (0 <= index < len(self._device_ids)):
+            return
+        self.selected_id = self._device_ids[index]
+        self._apply_selected_state()
+
+    def device_state_changed(self, device_id: str) -> None:
+        """某台裝置有新讀數或狀態 (由控制器呼叫)。"""
+        if device_id == self.selected_id:
+            self._apply_selected_state()
+        self.devices_section.update_captions()
+
+    def _apply_selected_state(self) -> None:
+        state = self.controller.state_for(self.selected_id)
+        device = next((d for d in self.controller.devices if d.id == self.selected_id), None)
+        self.model_badge.set_text("LYWSD03MMC" if device is None or device.kind == KIND_STOCK else "開源廣播")
+        # 開源廣播裝置本來就持續更新，沒有「立即更新」
+        self.refresh_button.set_sensitive(device is not None and device.kind == KIND_STOCK)
+        is_primary = device is not None and device.id == self.controller.primary_id
+        self.primary_button.set_label("✓ 狀態列" if is_primary else "設為狀態列")
+        self.primary_button.set_sensitive(device is not None and not is_primary)
+        self.primary_button.set_visible(device is not None)
+        if state.reading is not None:
+            self._show_reading(state.reading)
+        else:
+            self._show_empty()
+        self.refresh_status()
+        self.reload_data()
 
     # MARK: - 數據圖表分頁
 
@@ -235,9 +327,9 @@ class DashboardWindow(Gtk.Window):
             group = button
         chart_header.pack_start(segments, False, False, 0)
 
-        refresh_button = Gtk.Button(label="立即更新")
-        refresh_button.connect("clicked", lambda _b: self.controller.refresh_now())
-        chart_header.pack_end(refresh_button, False, False, 0)
+        self.refresh_button = Gtk.Button(label="立即更新")
+        self.refresh_button.connect("clicked", lambda _b: self.controller.refresh_now(self.selected_id))
+        chart_header.pack_end(self.refresh_button, False, False, 0)
         export_button = Gtk.Button(label="匯出 CSV")
         export_button.connect("clicked", self._handle_export_csv)
         chart_header.pack_end(export_button, False, False, 0)
@@ -280,11 +372,20 @@ class DashboardWindow(Gtk.Window):
         parent.pack_start(card, True, True, 0)
         return value, sub
 
-    def update_reading(self, r: SensorReading) -> None:
-        history = HistoryManager.shared()
+    def _selected_history(self) -> Optional[HistoryManager]:
+        return HistoryManager.for_device(self.selected_id) if self.selected_id else None
+
+    def _show_empty(self) -> None:
+        for value, sub in ((self.temp_value, self.temp_sub), (self.hum_value, self.hum_sub), (self.bat_value, self.bat_sub)):
+            value.set_text("--")
+            sub.set_text("尚無數據")
+        self.device_view.set_reading(None, None, None)
+
+    def _show_reading(self, r: SensorReading) -> None:
+        history = self._selected_history()
         self.temp_value.set_text(f"{r.temperature:.1f}°C")
-        min_t = history.min_temperature if history.min_temperature is not None else r.temperature
-        max_t = history.max_temperature if history.max_temperature is not None else r.temperature
+        min_t = history.min_temperature if history and history.min_temperature is not None else r.temperature
+        max_t = history.max_temperature if history and history.max_temperature is not None else r.temperature
         self.temp_sub.set_text(f"歷史 {min_t:.1f}° ~ {max_t:.1f}°")
 
         self.hum_value.set_text(f"{r.humidity:.0f}%")
@@ -295,10 +396,10 @@ class DashboardWindow(Gtk.Window):
         self.bat_sub.set_text(f"{r.voltage:.3f} V · " + ("電量過低，請更換電池" if low else "正常"))
 
         self.device_view.set_reading(r.temperature, r.humidity, r.battery_percent)
-        self.reload_data()
 
     def reload_data(self) -> None:
-        self.chart_view.update_points(HistoryManager.shared().points)
+        history = self._selected_history()
+        self.chart_view.update_points(history.points if history else [])
 
     def _handle_segment_changed(self, button: Gtk.RadioButton, data_type: ChartDataType) -> None:
         if button.get_active():
@@ -317,9 +418,12 @@ class DashboardWindow(Gtk.Window):
             self._busy = False
 
     def _export_csv(self) -> None:
+        history = self._selected_history()
+        if history is None:
+            return
         chooser = Gtk.FileChooserNative.new("匯出溫濕度歷史數據", self, Gtk.FileChooserAction.SAVE, "儲存", "取消")
         chooser.set_do_overwrite_confirmation(True)
-        chooser.set_current_name(f"mijia_temp_history_{int(time.time())}.csv")
+        chooser.set_current_name(f"mijia_temp_history_{file_id(self.selected_id)}_{int(time.time())}.csv")
         csv_filter = Gtk.FileFilter()
         csv_filter.set_name("CSV (*.csv)")
         csv_filter.add_pattern("*.csv")
@@ -332,7 +436,7 @@ class DashboardWindow(Gtk.Window):
             return
 
         try:
-            HistoryManager.shared().export_csv(Path(filename))
+            history.export_csv(Path(filename))
             title, message, kind = "匯出成功", f"數據已成功儲存至:\n{filename}", Gtk.MessageType.INFO
         except OSError as e:
             title, message, kind = "匯出失敗", str(e), Gtk.MessageType.ERROR
@@ -354,6 +458,9 @@ class DashboardWindow(Gtk.Window):
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         page.set_margin_end(10)
         scroller.add(page)
+
+        # 裝置 (每台一列，最後一列搜尋新裝置；內容由 reload_devices 填入)
+        self.devices_section = DevicesSection(self, page)
 
         # 更新與省電
         card = self._section(page, "更新與省電")
@@ -384,7 +491,7 @@ class DashboardWindow(Gtk.Window):
         # 通知
         card = self._section(page, "通知")
         self.low_battery_switch = self._switch(self._handle_low_battery_toggled)
-        self._add_row(card, "低電量通知", "電量 ≤ 15% 或電壓 ≤ 2.60V 時提醒，每天最多一次。", [self.low_battery_switch])
+        self._add_row(card, "低電量通知", "電量 ≤ 15% 或電壓 ≤ 2.60V 時提醒，每台裝置每天最多一次。", [self.low_battery_switch])
         self.humidity_switch = self._switch(self._handle_humidity_toggled)
         self._add_row(card, "濕度警示", "超出下方設定範圍時通知，持續超標每 3 小時再提醒。", [self.humidity_switch])
         self.humidity_high_spin = self._percent_spin()

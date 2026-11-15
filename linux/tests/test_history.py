@@ -56,5 +56,58 @@ class HistoryManagerTests(unittest.TestCase):
         self.assertEqual(rows[1], ["2026-01-02 03:04:05", "23.31", "32.0", "2.876", "86"])
 
 
+class PerDeviceHistoryTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self._tmp.name) / "history"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_each_device_has_its_own_file(self):
+        a = HistoryManager.for_device("A4:C1:38:8C:9B:32", self.base)
+        b = HistoryManager.for_device("A4:C1:38:00:11:22", self.base)
+        a.add_point(20.0, 50.0, 3.0, 100, timestamp=1.0)
+        self.assertEqual(a.storage_path, self.base / "A4C1388C9B32.json")
+        self.assertEqual(b.points, [])
+        self.assertTrue((self.base / "A4C1388C9B32.json").exists())
+        self.assertFalse((self.base / "A4C138001122.json").exists())
+
+    def test_for_device_reuses_instance(self):
+        first = HistoryManager.for_device("A4:C1:38:8C:9B:32", self.base)
+        self.assertIs(first, HistoryManager.for_device("A4:C1:38:8C:9B:32", self.base))
+
+    def test_last_point(self):
+        history = HistoryManager.for_device("A4:C1:38:8C:9B:32", self.base)
+        self.assertIsNone(history.last_point)
+        history.add_point(20.0, 50.0, 3.0, 100, timestamp=5.0)
+        self.assertEqual(history.last_point.timestamp, 5.0)
+
+    def test_corrupted_file_is_set_aside_before_overwrite(self):
+        self.base.mkdir(parents=True)
+        path = self.base / "A4C1388C9B32.json"
+        path.write_text("{broken", encoding="utf-8")
+        history = HistoryManager(path)
+        self.assertEqual(history.points, [])
+        backups = list(self.base.glob("A4C1388C9B32.corrupt-*.json"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_text(encoding="utf-8"), "{broken")
+
+    def test_non_utf8_file_is_set_aside_not_crash(self):
+        self.base.mkdir(parents=True)
+        path = self.base / "A4C1388C9B32.json"
+        path.write_bytes(b"\xff\xfe\x00bad")
+        history = HistoryManager(path)
+        self.assertEqual(history.points, [])
+        self.assertEqual(len(list(self.base.glob("A4C1388C9B32.corrupt-*.json"))), 1)
+
+    def test_unreadable_file_is_never_overwritten(self):
+        path = self.base / "A4C1388C9B32.json"
+        path.mkdir(parents=True)  # 目錄當檔案讀 → IsADirectoryError (OSError，但不是檔案不存在)
+        history = HistoryManager(path)
+        history.add_point(20.0, 50.0, 3.0, 100, timestamp=1.0)
+        self.assertTrue(path.is_dir())
+
+
 if __name__ == "__main__":
     unittest.main()

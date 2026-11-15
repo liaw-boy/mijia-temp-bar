@@ -5,7 +5,10 @@ from mijia_temp_bar.notifications import (
     COOLDOWN_SECONDS,
     HUMIDITY_REPEAT_SECONDS,
     HumidityMonitor,
+    humidity_monitor_for,
     is_low,
+    next_low_battery_state,
+    reset_humidity_monitor,
     should_alert,
     valid_thresholds,
 )
@@ -69,6 +72,39 @@ class HumidityMonitorTests(unittest.TestCase):
         self.assertFalse(valid_thresholds(70, 70))
         self.assertFalse(valid_thresholds(101, 30))
         self.assertFalse(valid_thresholds(70, -1))
+
+
+class PerDeviceLowBatteryTests(unittest.TestCase):
+    def test_first_low_reading_notifies(self):
+        self.assertEqual(next_low_battery_state(None, 10, 2.5, 1000.0), (True, 1000.0))
+
+    def test_cooldown_keeps_last_time(self):
+        self.assertEqual(next_low_battery_state(1000.0, 10, 2.5, 1500.0), (False, 1000.0))
+
+    def test_recovery_clears_cooldown(self):
+        self.assertEqual(next_low_battery_state(1000.0, 80, 3.0, 1500.0), (False, None))
+
+    def test_ok_but_not_recovered_keeps_cooldown(self):
+        self.assertEqual(next_low_battery_state(1000.0, 25, 2.8, 1500.0), (False, 1000.0))
+
+
+class PerDeviceHumidityTests(unittest.TestCase):
+    def setUp(self):
+        reset_humidity_monitor()
+
+    def test_each_device_has_its_own_state(self):
+        a = humidity_monitor_for("A")
+        b = humidity_monitor_for("B")
+        self.assertIsNot(a, b)
+        self.assertIs(a, humidity_monitor_for("A"))
+        self.assertEqual(a.check(75, 70, 30, 0), "high")
+        self.assertIsNone(b.check(55, 70, 30, 1))   # B 正常不會把 A 重新武裝
+        self.assertIsNone(a.check(76, 70, 30, 2))
+
+    def test_reset_clears_all(self):
+        humidity_monitor_for("A").check(75, 70, 30, 0)
+        reset_humidity_monitor()
+        self.assertEqual(humidity_monitor_for("A").check(75, 70, 30, 1), "high")
 
 
 if __name__ == "__main__":
