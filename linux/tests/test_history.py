@@ -1,6 +1,7 @@
 import csv
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime
 from pathlib import Path
 
@@ -12,6 +13,10 @@ class HistoryManagerTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self._tmp.name)
         self.path = self.dir / "history.json"
+        self.now = 10_000.0  # 測試資料的時間很早：固定「現在」，避免被保存天數清掉
+        patcher = mock.patch.object(HistoryManager, "_now", lambda _self: self.now)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -46,6 +51,7 @@ class HistoryManagerTests(unittest.TestCase):
     def test_export_csv(self):
         history = HistoryManager(self.path)
         ts = datetime(2026, 1, 2, 3, 4, 5).timestamp()
+        self.now = ts + 10
         history.add_point(23.314, 32.04, 2.8764, 86, timestamp=ts)
 
         out = self.dir / "export.csv"
@@ -60,6 +66,9 @@ class PerDeviceHistoryTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.base = Path(self._tmp.name) / "history"
+        patcher = mock.patch.object(HistoryManager, "_now", lambda _self: 10_000.0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def tearDown(self):
         self._tmp.cleanup()

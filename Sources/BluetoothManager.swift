@@ -8,6 +8,12 @@ protocol BluetoothManagerDelegate: AnyObject {
     func didUpdateDeviceStatus(_ status: String, deviceID: String, reachable: Bool?)
     func didUpdateReading(_ reading: SensorReading, deviceID: String)
     func didFailWithError(_ error: String)
+    /// 最近 30 天內第一個空白的起點 (決定要不要、從哪裡讀裝置內存的每小時紀錄)；沒有空白回傳 nil
+    func historyGapStart(deviceID: String, interval: TimeInterval) -> Date?
+    /// 讀到裝置內存的每小時紀錄 (在這次的 didUpdateReading 之前呼叫)。
+    /// coveredThrough：裝置歷史已讀到的時間 (這之前補不到的空白裝置也沒有紀錄，之後不再重讀)；沒有進度時為 nil
+    func didReceiveHourlyHistory(_ records: [HourlyRecord], deviceNow: UInt32, reading: SensorReading,
+                                 deviceID: String, coveredThrough: Date?)
 }
 
 /// CoreBluetooth 多裝置管理：原廠 GATT 即連即斷輪詢 (一次只連一台)、開源廣播接收與搜尋新裝置。
@@ -23,13 +29,35 @@ final class BluetoothManager: NSObject {
     // 原廠韌體 UUID 定義
     private let serviceUUID = CBUUID(string: "EBE0CCB0-7A0A-4B0C-8A1A-6FF2997DA3A6")
     private let charUUID = CBUUID(string: "EBE0CCC1-7A0A-4B0C-8A1A-6FF2997DA3A6")
+    // 裝置內存的每小時紀錄 (同一個 service，免認證)
+    private let timeUUID = CBUUID(string: "EBE0CCB7-7A0A-4B0C-8A1A-6FF2997DA3A6")
+    private let countUUID = CBUUID(string: "EBE0CCB9-7A0A-4B0C-8A1A-6FF2997DA3A6")
+    private let indexUUID = CBUUID(string: "EBE0CCBA-7A0A-4B0C-8A1A-6FF2997DA3A6")
+    private let recordsUUID = CBUUID(string: "EBE0CCBC-7A0A-4B0C-8A1A-6FF2997DA3A6")
+    private let historyRetryInterval: TimeInterval = 3 * 3600  // 讀歷史失敗或裝置沒紀錄時，隔這麼久才再試
     private let broadcastMinInterval: TimeInterval = 10  // 開源廣播每台裝置最短的介面更新間隔
 
     /// wasFailing：手動更新前已連續失敗 (退避被手動重設)，這次連線仍視為連不到的裝置，可被另一台的手動更新插隊
     private struct Runtime { var due: Date; var failures = 0; var lastSuccess: Date?; var wasFailing = false }
     private struct BroadcastState { var lastSeen: Date; var lastEmit = Date.distantPast; var staleReported = false }
-    private enum Phase { case locating, connecting, connected }
-    private struct Attempt { let id: String; let token: Int; var phase: Phase; let timer: Timer }
+    private enum Phase { case locating, connecting, connected, history }
+    private struct Attempt { let id: String; let token: Int; var phase: Phase; var timer: Timer }
+    /// 讀完當下數值後接著讀裝置內存的歷史；任何一步失敗都只保留已收到的部分，當下讀數照常記錄
+    private struct HistoryRun {
+        let reading: SensorReading
+        let since: Date
+        let startedAt = Date()
+        var complete = false   // 這一段讀到 lastIndex 為止 (或裝置沒有紀錄)
+        var noRecords = false  // 裝置沒有可讀的紀錄
+        var total: UInt32 = 0
+        var deviceNow: UInt32?
+        var startIndex: UInt32?
+        var lastIndex: UInt32 = 0
+        var written = false    // 起始 index 寫入完成後才認最後一筆 (先推的舊紀錄可能剛好落在範圍內)
+        var lastSeen = false
+        var seen = Set<UInt32>()  // 已收到的 index
+        var records: [HourlyRecord] = []
+    }
     private enum Outcome { case success(SensorReading), failure(String, timeout: Bool), cancelled }
     private enum ScanReason { case discovery, rediscover }
     private struct Discovery {
@@ -47,6 +75,8 @@ final class BluetoothManager: NSObject {
     private var broadcasts: [String: BroadcastState] = [:]
     private var peripherals: [UUID: CBPeripheral] = [:]  // 強參照：CoreBluetooth 會取消沒人持有的連線
     private var attempt: Attempt?
+    private var historyRun: HistoryRun?
+    private var lastHistoryAttempt: [String: Date] = [:]
     private var attemptCounter = 0
     private var oneShotIDs = Set<String>()            // 離家停機時手動要求的單次讀取
     private var manualIDs = Set<String>()             // 手動要求更新的裝置，下次優先讀
@@ -113,7 +143,8 @@ final class BluetoothManager: NSObject {
         }
         manualIDs.formUnion(targets)
         // 正在對另一台連不到的裝置連線 (離線重試，或對它的手動更新)：先中斷那次 (不算失敗)，否則要等它逾時才輪到手動更新
-        if let a = attempt, !targets.contains(a.id), let current = runtimes[a.id], current.failures > 0 || current.wasFailing {
+        // 讀裝置歷史期間 (當下數值已讀到) 不插隊，最多等 DeviceHistory.totalTimeout
+        if let a = attempt, a.phase != .history, !targets.contains(a.id), let current = runtimes[a.id], current.failures > 0 || current.wasFailing {
             mijiaLog("手動更新插隊：中斷 [\(a.id)] 的連線 (這台原本就連不到，不算失敗)")
             finishAttempt(a.id, token: a.token, outcome: .cancelled)
             delegate?.didUpdateDeviceStatus("設備未在連線範圍內", deviceID: a.id, reachable: false)
@@ -279,8 +310,15 @@ final class BluetoothManager: NSObject {
     /// 結束這次連線 (只認目前這一次；逾時後才到的回呼一律忽略)，斷線並排定下一次
     private func finishAttempt(_ id: String, token: Int, outcome: Outcome) {
         guard let a = attempt, a.id == id, a.token == token else { return }
+        var outcome = outcome
+        if case .cancelled = outcome, a.phase == .history, let run = historyRun {
+            // 讀歷史時被中斷 (停機、藍牙關閉、移除裝置)：當下數值已讀到，照常記錄並交出已收到的紀錄
+            deliverHistory(id, run)
+            outcome = .success(run.reading)
+        }
         a.timer.invalidate()
         attempt = nil
+        historyRun = nil
         if let uuid = UUID(uuidString: id), let p = peripherals[uuid], p.state != .disconnected {
             centralManager.cancelPeripheralConnection(p)
         }
@@ -455,7 +493,9 @@ extension BluetoothManager: CBCentralManagerDelegate {
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         let id = peripheral.identifier.uuidString
-        if let a = attempt, a.id == id, a.phase == .connected {
+        if let a = attempt, a.id == id, a.phase == .history {
+            finishHistory("讀取裝置歷史時斷線")
+        } else if let a = attempt, a.id == id, a.phase == .connected {
             // 讀到數據前就斷線：算一次失敗並排定重試 (舊版在這裡會停止輪詢)
             finishAttempt(id, token: a.token, outcome: .failure("非預期連線中斷: \(error?.localizedDescription ?? "正常斷線")", timeout: false))
         } else if sleepingAfterRead.remove(id) != nil {
@@ -487,6 +527,14 @@ extension BluetoothManager: CBPeripheralDelegate {
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
+        if currentHistory(peripheral) != nil {
+            guard let time = characteristic(timeUUID, peripheral) else {
+                finishHistory("找不到裝置時間特徵值")
+                return
+            }
+            peripheral.readValue(for: time)
+            return
+        }
         guard currentConnected(peripheral) != nil else { return }
         guard let char = service.characteristics?.first(where: { $0.uuid == charUUID }) else {
             failCurrent(peripheral, "找不到溫濕度特徵值: \(error?.localizedDescription ?? "無此特徵值")")
@@ -498,18 +546,187 @@ extension BluetoothManager: CBPeripheralDelegate {
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        if currentHistory(peripheral) != nil {
+            handleHistoryValue(peripheral, characteristic, error: error)
+            return
+        }
         guard characteristic.uuid == charUUID, let a = currentConnected(peripheral) else { return }
         guard error == nil, let data = characteristic.value, let m = AdvertisementParser.parseStockGATT(data) else {
             failCurrent(peripheral, "讀取失敗: \(error?.localizedDescription ?? "數據長度不足")")
             return
         }
         mijiaLog("收到原廠數據: 溫度=\(m.temperature)°C, 濕度=\(m.humidity)%, 電壓=\(m.voltage)V, 電量=\(m.batteryPercent)% [\(a.id)]")
+        let reading = SensorReading(m, name: devices[a.id]?.name ?? (peripheral.name ?? a.id), rssi: nil, isBroadcast: false)
+
+        // 歷史有超過 1 小時的空白 (電腦睡眠、離家、不在範圍內) 才順便讀裝置內存的每小時紀錄
+        let now = Date()
+        if let since = delegate?.historyGapStart(deviceID: a.id, interval: refreshInterval),
+           lastHistoryAttempt[a.id].map({ now.timeIntervalSince($0) >= historyRetryInterval }) ?? true,
+           let service = peripheral.services?.first(where: { $0.uuid == serviceUUID }) {
+            startHistory(peripheral, service, a, reading: reading, since: since)
+            return
+        }
 
         // ★★★ 極致省電核心機制 ★★★
         // 讀取完畢後，立刻主動斷開 BLE GATT 連線 (finishAttempt 內)，
         // 讓硬體 TLSR8251 晶片立刻進入 Deep Sleep 休眠模式，耗電瞬間從 150µA 降至 15µA！
         mijiaLog("數據讀取完成，立刻主動斷開連線以讓硬體休眠省電 (下次連線間隔: \(Int(refreshInterval)) 秒)...")
-        let reading = SensorReading(m, name: devices[a.id]?.name ?? (peripheral.name ?? a.id), rssi: nil, isBroadcast: false)
         finishAttempt(a.id, token: a.token, outcome: .success(reading))
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
+        guard characteristic.uuid == recordsUUID, currentHistory(peripheral) != nil, let run = historyRun else { return }
+        guard error == nil, let index = self.characteristic(indexUUID, peripheral) else {
+            finishHistory("無法訂閱歷史紀錄: \(error?.localizedDescription ?? "找不到特徵值")")
+            return
+        }
+        guard let deviceNow = run.deviceNow, let start = run.startIndex else {
+            finishHistory("缺少裝置時間")
+            return
+        }
+        mijiaLog("讀取裝置歷史: 從第 \(start) 筆到第 \(run.lastIndex) 筆 (裝置時間 \(deviceNow))")
+        let type: CBCharacteristicWriteType = index.properties.contains(.write) ? .withResponse : .withoutResponse
+        peripheral.writeValue(DeviceHistory.uint32Data(start), for: index, type: type)
+        if type == .withoutResponse, var r = historyRun {  // 沒有寫入回應可等，視為已寫入
+            r.written = true
+            historyRun = r
+        }
+    }
+
+    // MARK: - 裝置內存歷史
+
+    private func currentHistory(_ peripheral: CBPeripheral) -> Attempt? {
+        guard let a = attempt, a.id == peripheral.identifier.uuidString, a.phase == .history, historyRun != nil else { return nil }
+        return a
+    }
+
+    private func characteristic(_ uuid: CBUUID, _ peripheral: CBPeripheral) -> CBCharacteristic? {
+        peripheral.services?.first(where: { $0.uuid == serviceUUID })?.characteristics?.first(where: { $0.uuid == uuid })
+    }
+
+    private func startHistory(_ peripheral: CBPeripheral, _ service: CBService, _ a: Attempt, reading: SensorReading, since: Date) {
+        var a = a
+        lastHistoryAttempt[a.id] = Date()
+        a.phase = .history
+        attempt = a
+        historyRun = HistoryRun(reading: reading, since: since)
+        armHistoryTimer(DeviceHistory.setupTimeout)
+        mijiaLog("歷史有空白，讀取裝置內存的每小時紀錄 (從 \(since) 起) [\(a.id)]...")
+        peripheral.discoverCharacteristics([timeUUID, countUUID, indexUUID, recordsUUID], for: service)
+    }
+
+    private func handleHistoryValue(_ peripheral: CBPeripheral, _ characteristic: CBCharacteristic, error: Error?) {
+        guard var run = historyRun else { return }
+        guard error == nil, let data = characteristic.value else {
+            finishHistory("讀取裝置歷史失敗: \(error?.localizedDescription ?? "沒有資料")")
+            return
+        }
+        switch characteristic.uuid {
+        case timeUUID:
+            guard let deviceNow = DeviceHistory.parseDeviceTime(data), let count = self.characteristic(countUUID, peripheral) else {
+                finishHistory("無法解析裝置時間")
+                return
+            }
+            run.deviceNow = deviceNow
+            historyRun = run
+            peripheral.readValue(for: count)
+        case countUUID:
+            guard let count = DeviceHistory.parseCount(data), count.total > 0,
+                  let start = DeviceHistory.startIndex(total: count.total, stored: count.stored, since: run.since, now: Date()),
+                  let records = self.characteristic(recordsUUID, peripheral) else {
+                run.complete = true  // 裝置沒有紀錄：之前的空白補不到，之後不再重讀
+                run.noRecords = true
+                historyRun = run
+                finishHistory("裝置沒有可讀的歷史紀錄")
+                return
+            }
+            run.total = count.total
+            run.lastIndex = DeviceHistory.chunkEnd(start: start, total: count.total)  // 一次最多 30 天，更早的下次接著讀
+            run.startIndex = start
+            historyRun = run
+            peripheral.setNotifyValue(true, for: records)
+        case recordsUUID:
+            // 訂閱後、寫入起始位置前裝置會先推幾筆舊的 (實機確認)：比起始舊的略過
+            // 只收這一段範圍內的 (先推的舊紀錄可能落在範圍外，包括比結尾新的)
+            guard let index = DeviceHistory.recordIndex(data), index >= run.startIndex ?? 0, index <= run.lastIndex else { return }
+            // 同一筆重送就不再收 (裝置資料不可信，也避免之後補空白時重複計算)
+            if !run.seen.contains(index), run.records.count < Int(DeviceHistory.maxRecords),
+               let record = DeviceHistory.parseRecord(data) {  // 數值不合理就不收
+                run.records.append(record)
+            }
+            run.seen.insert(index)
+            if index >= run.lastIndex { run.lastSeen = true }
+            historyRun = run
+            armHistoryTimer(DeviceHistory.idleTimeout)  // 資料還在進來就繼續等
+            if run.lastSeen && run.written { finishHistory(nil, complete: true) }
+        default:
+            break
+        }
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
+        guard characteristic.uuid == indexUUID, currentHistory(peripheral) != nil, var run = historyRun else { return }
+        if let error = error {
+            finishHistory("寫入歷史起始位置失敗: \(error.localizedDescription)")
+            return
+        }
+        run.written = true
+        historyRun = run
+        if run.lastSeen { finishHistorySoon() }
+    }
+
+    /// 最後一筆在寫入回應前就到了 (可能是寫入前先推的舊紀錄)：再等一下，沒有新的就結束
+    private func finishHistorySoon() {
+        guard let a = attempt else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self = self, let cur = self.attempt, cur.token == a.token else { return }
+            self.finishHistory(nil, complete: true)
+        }
+    }
+
+    /// 讀歷史的逾時：每收到一筆就重新計時，但整次不超過 totalTimeout
+    private func armHistoryTimer(_ seconds: TimeInterval) {
+        guard var a = attempt, a.phase == .history, let run = historyRun else { return }
+        let left = DeviceHistory.totalTimeout - Date().timeIntervalSince(run.startedAt)
+        a.timer.invalidate()
+        let id = a.id, token = a.token
+        let timer = Timer(timeInterval: max(0.1, min(seconds, left)), repeats: false) { [weak self] _ in
+            guard let self = self, let cur = self.attempt, cur.id == id, cur.token == token else { return }
+            self.finishHistory("讀取裝置歷史逾時")
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        a.timer = timer
+        attempt = a
+    }
+
+    /// 結束讀取歷史 (成功或失敗都一樣)：交出已收到的紀錄，當下讀數照常記錄
+    private func finishHistory(_ failure: String?, complete: Bool = false) {
+        guard let a = attempt, a.phase == .history, var run = historyRun else { return }
+        if let failure = failure { mijiaLog("\(failure) [\(a.id)]；保留已收到的 \(run.records.count) 筆") }
+        if complete { run.complete = true }
+        historyRun = nil  // 已交出，finishAttempt 不再重複處理
+        deliverHistory(a.id, run)
+        finishAttempt(a.id, token: a.token, outcome: .success(run.reading))
+    }
+
+    private func deliverHistory(_ id: String, _ run: HistoryRun) {
+        guard let deviceNow = run.deviceNow, !run.records.isEmpty || run.complete else { return }
+        let now = Date()
+        let reachedEnd = run.complete && (run.noRecords || run.lastIndex + 1 >= run.total)
+        let covered: Date?
+        if reachedEnd {
+            covered = now
+        } else if run.complete {
+            // 這一段讀完 (即使都是無效紀錄也往前推進)：每筆一小時，依 index 換算這段結尾的時間
+            covered = now.addingTimeInterval(-Double(run.total - 1 - run.lastIndex) * 3600)
+        } else {
+            covered = run.records.max(by: { $0.index < $1.index }).map { DeviceHistory.realEnd($0, deviceNow: deviceNow, now: now) }
+        }
+        if run.complete && !reachedEnd {
+            lastHistoryAttempt[id] = nil  // 這一段讀完了，下次連線就接著讀下一段
+        }
+        mijiaLog("收到裝置歷史 \(run.records.count) 筆 [\(id)]\(reachedEnd ? "" : run.complete ? " (還有更新的，下次接著讀)" : " (未讀完)")")
+        delegate?.didReceiveHourlyHistory(run.records, deviceNow: deviceNow, reading: run.reading,
+                                          deviceID: id, coveredThrough: covered)
     }
 }

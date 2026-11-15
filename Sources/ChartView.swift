@@ -318,8 +318,8 @@ final class ChartView: NSView {
             drawGlowDot(at: CGPoint(x: x, y: yT), color: tempColor, in: ctx)
 
             let df = DateFormatter()
-            df.dateFormat = "HH:mm:ss"
-            let text = "\(df.string(from: hPoint.timestamp))  ·  溫度 \(String(format: "%.1f°C", hPoint.temperature))   濕度 \(String(format: "%.0f%%", hPoint.humidity))   電量 \(hPoint.batteryPercent)%"
+            df.dateFormat = "M/d HH:mm"  // 範圍可能跨好幾天，一律帶日期
+            let text = "\(df.string(from: hPoint.timestamp))    │    溫度 \(String(format: "%.1f°C", hPoint.temperature))     濕度 \(String(format: "%.0f%%", hPoint.humidity))     電量 \(hPoint.batteryPercent)%"
             let topY = max(yT, max(yH, yB))
             drawHUDTooltip(text: text, at: CGPoint(x: x, y: topY + 14), graphRect: graphRect, in: ctx)
         }
@@ -433,12 +433,12 @@ final class ChartView: NSView {
             drawGlowDot(at: pt, color: mainColor, in: ctx)
 
             let df = DateFormatter()
-            df.dateFormat = "HH:mm:ss"
+            df.dateFormat = "M/d HH:mm"  // 範圍可能跨好幾天，一律帶日期
             let text: String
             switch dataType {
-            case .temperature: text = "\(df.string(from: hPoint.timestamp))  ·  溫度 \(String(format: "%.1f °C", val))"
-            case .humidity: text = "\(df.string(from: hPoint.timestamp))  ·  濕度 \(String(format: "%.0f %%", val))"
-            case .voltage: text = "\(df.string(from: hPoint.timestamp))  ·  電壓 \(String(format: "%.3f V", val)) (\(hPoint.batteryPercent)%)"
+            case .temperature: text = "\(df.string(from: hPoint.timestamp))    │    溫度 \(String(format: "%.1f °C", val))"
+            case .humidity: text = "\(df.string(from: hPoint.timestamp))    │    濕度 \(String(format: "%.0f %%", val))"
+            case .voltage: text = "\(df.string(from: hPoint.timestamp))    │    電壓 \(String(format: "%.3f V", val)) (\(hPoint.batteryPercent)%)"
             default: text = ""
             }
 
@@ -520,7 +520,7 @@ final class ChartView: NSView {
         ]
         let nsText = text as NSString
         let sz = nsText.size(withAttributes: attrs)
-        let bubbleW = sz.width + 20
+        let bubbleW = sz.width + 28
         let bubbleH: CGFloat = 26
         let x = max(graphRect.minX + 4, min(graphRect.maxX - bubbleW - 4, point.x - bubbleW / 2))
         

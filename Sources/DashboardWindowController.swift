@@ -58,6 +58,7 @@ final class DashboardWindowController: NSWindowController {
 
     // 2. 頻率與省電
     var intervalPopUp: NSPopUpButton!
+    var retentionPopUp: NSPopUpButton?
     var customIntervalField: NSTextField!
 
     // 3. 外觀與通知
@@ -69,7 +70,8 @@ final class DashboardWindowController: NSWindowController {
     var humidityLowField: NSTextField!
 
     // 4. 裝置與登入時自動啟動 (設定分頁)
-    var deviceSummaryTitle: NSTextField?
+    var deviceCard: SettingsSection?
+    var deviceRowIDs: [String] = []   // 裝置列按鈕的 tag 對應的裝置
     var launchAtLoginCheckbox: NSButton!
     var launchAtLoginCaption: NSTextField?
 
@@ -137,19 +139,20 @@ final class DashboardWindowController: NSWindowController {
         headerBar.addSubview(deviceView)
 
         // 裝置切換 (取代原本固定的標題) 與型號標章
-        devicePopUp = NSPopUpButton(frame: NSRect(x: 54, y: 21, width: 154, height: 24), pullsDown: false)
+        devicePopUp = NSPopUpButton(frame: NSRect(x: 54, y: 22, width: 180, height: 24), pullsDown: false)
         devicePopUp.font = NSFont.systemFont(ofSize: 13, weight: .bold)
         devicePopUp.target = self
         devicePopUp.action = #selector(handleDeviceSelected)
         devicePopUp.toolTip = "選擇要查看的裝置"
         headerBar.addSubview(devicePopUp)
 
-        // 下拉選單只決定儀表板看哪一台；按這個按鈕才改狀態列顯示的主裝置 (取代原本的型號標章位置)
-        primaryButton = NSButton(title: "設為狀態列", target: self, action: #selector(handleMakePrimary))
-        primaryButton.bezelStyle = .rounded
+        // 下拉選單只決定儀表板看哪一台；按這個按鈕才改狀態列顯示的主裝置 (只有一台時隱藏，放在右側時間下方)
+        primaryButton = NSButton(title: "顯示在狀態列", target: self, action: #selector(handleMakePrimary))
+        primaryButton.bezelStyle = .recessed
         primaryButton.controlSize = .small
-        primaryButton.font = NSFont.systemFont(ofSize: 11)
-        primaryButton.frame = NSRect(x: 210, y: 21, width: 84, height: 24)
+        primaryButton.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        primaryButton.frame = NSRect(x: 578, y: 2, width: 130, height: 20)
+        primaryButton.toolTip = "狀態列 (螢幕右上角) 的溫濕度顯示這一台"
         headerBar.addSubview(primaryButton)
 
         modelBadgeLabel = NSTextField(labelWithString: "LYWSD03MMC")
@@ -159,7 +162,7 @@ final class DashboardWindowController: NSWindowController {
         headerBar.addSubview(modelBadgeLabel)
 
         statusDotLabel = NSTextField(labelWithString: "● 連線正常 (省電輪詢模式)")
-        statusDotLabel.frame = NSRect(x: 58, y: 6, width: 190, height: 16)
+        statusDotLabel.frame = NSRect(x: 58, y: 5, width: 190, height: 16)
         statusDotLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
         statusDotLabel.textColor = NSColor(red: 0.25, green: 0.88, blue: 0.50, alpha: 1.0)
         headerBar.addSubview(statusDotLabel)
@@ -171,13 +174,13 @@ final class DashboardWindowController: NSWindowController {
             target: self,
             action: #selector(handleTopTabChanged)
         )
-        topSegmentedControl.frame = NSRect(x: 295, y: 10, width: 200, height: 28)
+        topSegmentedControl.frame = NSRect(x: 255, y: 10, width: 200, height: 28)  // 置中
         topSegmentedControl.selectedSegment = 0
         headerBar.addSubview(topSegmentedControl)
 
         // 最右側最後更新時間
-        lastUpdateLabel = NSTextField(labelWithString: "最後讀取: --:--")
-        lastUpdateLabel.frame = NSRect(x: 510, y: 16, width: 198, height: 16)
+        lastUpdateLabel = NSTextField(labelWithString: "最後讀取 --:--")
+        lastUpdateLabel.frame = NSRect(x: 478, y: 16, width: 230, height: 16)
         lastUpdateLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         lastUpdateLabel.alignment = .right
         lastUpdateLabel.textColor = NSColor(white: 0.55, alpha: 1.0)
@@ -380,6 +383,7 @@ final class DashboardWindowController: NSWindowController {
     /// 某台裝置有新讀數或狀態 (由 StatusBarController 呼叫)
     func deviceStateChanged(_ id: String) {
         if id == selectedDeviceID { applySelectedState() }
+        reloadDeviceSection()  // 設定頁的裝置列顯示每台的讀數與狀態
     }
 
     func applySelectedState() {
@@ -387,9 +391,12 @@ final class DashboardWindowController: NSWindowController {
         modelBadgeLabel.stringValue = device?.kind == .broadcast ? "開源廣播" : "LYWSD03MMC"
         modelBadgeLabel.isHidden = true  // 位置讓給「設為狀態列」按鈕；連線模式在右鍵選單的裝置資訊裡
         let isPrimary = device != nil && device?.id == coordinator?.primaryID
-        primaryButton.title = isPrimary ? "✓ 狀態列" : "設為狀態列"
+        let multiple = (coordinator?.devices.count ?? 0) > 1
+        primaryButton.title = isPrimary ? "★ 狀態列顯示中" : "顯示在狀態列"
         primaryButton.isEnabled = device != nil && !isPrimary
-        primaryButton.isHidden = device == nil
+        primaryButton.isHidden = device == nil || !multiple
+        // 有按鈕時時間往上移，兩者疊成右側一欄；沒有就垂直置中
+        lastUpdateLabel.frame.origin.y = primaryButton.isHidden ? 16 : 27
         refreshButton.isEnabled = device?.kind == .stock  // 開源廣播裝置本來就持續更新
         let state = selectedDeviceID.flatMap { coordinator?.state(for: $0) } ?? DeviceState()
         if let r = state.reading {
@@ -432,7 +439,7 @@ final class DashboardWindowController: NSWindowController {
         deviceView.temperature = nil
         deviceView.humidity = nil
         deviceView.batteryPercent = nil
-        lastUpdateLabel.stringValue = "最後讀取: --:--"
+        lastUpdateLabel.stringValue = "最後讀取 --:--"
     }
 
     private func showReading(_ r: SensorReading) {
@@ -461,8 +468,8 @@ final class DashboardWindowController: NSWindowController {
         deviceView.batteryPercent = r.batteryPercent
 
         let df = DateFormatter()
-        df.dateFormat = "MM/dd HH:mm:ss"
-        lastUpdateLabel.stringValue = "最後讀取: \(df.string(from: r.lastUpdated))"
+        df.dateFormat = Calendar.current.isDateInToday(r.lastUpdated) ? "HH:mm:ss" : "MM/dd HH:mm"
+        lastUpdateLabel.stringValue = "最後讀取 \(df.string(from: r.lastUpdated))"
     }
 
     func reloadData() {

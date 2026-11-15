@@ -345,6 +345,73 @@ do {
     }
 }
 
+// MARK: - 裝置內存的每小時歷史
+do {
+    // idx=5, ts=7200, 最高 25.3°C/60%, 最低 -1.5°C/40%
+    let rec = DeviceHistory.parseRecord(hex("05000000201C0000FD003CF1FF28"))
+    check(rec == HourlyRecord(index: 5, deviceTime: 7200, maxTemperature: 25.3, maxHumidity: 60,
+                              minTemperature: -1.5, minHumidity: 40), "解析每小時紀錄")
+    check(DeviceHistory.parseRecord(hex("05000000201C0000FD003C")) == nil, "紀錄長度不足")
+    check(DeviceHistory.parseRecord(hex("05000000201C0000FD00FFF1FF28")) == nil, "濕度超過 100 丟掉")
+    check(DeviceHistory.parseCount(hex("0A00000005000000"))! == (10, 5), "解析筆數")
+    check(DeviceHistory.parseDeviceTime(hex("10270000")) == 10000, "解析裝置時間")
+    check(DeviceHistory.uint32Data(258) == hex("02010000"), "起始 index 編碼")
+
+    let now = Date(timeIntervalSince1970: 1_000_000)
+    // 每 5 分鐘一筆的連續歷史 (最近 2 天)
+    let steady = stride(from: 2 * 86400.0, through: 0, by: -300).map { now.addingTimeInterval(-$0) }
+    check(DeviceHistory.gapStart(points: steady, now: now, coveredUntil: nil) == now.addingTimeInterval(-30 * 86400), "最前面沒資料：從 30 天前開始")
+    let recent = steady.filter { now.timeIntervalSince($0) < 86400 }
+    check(DeviceHistory.gapStart(points: recent, now: now, coveredUntil: now.addingTimeInterval(-86400 - 60)) == nil, "連續沒有空白不讀")
+    var holed = recent.filter { !(now.addingTimeInterval(-10 * 3600)...now.addingTimeInterval(-7 * 3600)).contains($0) }
+    let holeStart = holed.last { $0 < now.addingTimeInterval(-10 * 3600) }
+    check(DeviceHistory.gapStart(points: holed, now: now, coveredUntil: now.addingTimeInterval(-86400 - 60)) == holeStart, "中間的舊空白也找得到")
+    check(DeviceHistory.gapStart(points: holed, now: now, coveredUntil: now.addingTimeInterval(-6 * 3600)) == nil, "已完整讀過的時段不重讀")
+    holed.removeAll { $0 > now.addingTimeInterval(-2 * 3600) }
+    check(DeviceHistory.gapStart(points: holed, now: now, coveredUntil: now.addingTimeInterval(-6 * 3600)) != nil, "之後的新空白要讀")
+    check(DeviceHistory.gapStart(points: [now.addingTimeInterval(-3 * 3600)], now: now, coveredUntil: now.addingTimeInterval(-3 * 3600 - 60),
+                                 interval: 3 * 3600) == nil, "更新間隔很長時正常間隔不算空白")
+    check(DeviceHistory.startIndex(total: 100, stored: 50, since: now.addingTimeInterval(-3 * 3600 - 60), now: now) == 95, "從空白起點讀到現在")
+    check(DeviceHistory.startIndex(total: 100, stored: 3, since: now.addingTimeInterval(-10 * 3600), now: now) == 97, "不超過裝置存的筆數")
+    check(DeviceHistory.startIndex(total: 1000, stored: 1000, since: now.addingTimeInterval(-60 * 86400), now: now) == 0, "裝置沒存那麼久就從最舊的開始")
+    check(DeviceHistory.chunkEnd(start: 0, total: 1000) == 719 && DeviceHistory.chunkEnd(start: 900, total: 1000) == 999, "一次最多讀 720 筆")
+    check(DeviceHistory.chunkEnd(start: UInt32.max - 1, total: UInt32.max) == UInt32.max - 1, "裝置回報的筆數接近上限也不會溢位")
+    check(DeviceHistory.gapStart(points: [], now: now, coveredUntil: nil, retentionDays: 90) == now.addingTimeInterval(-90 * 86400), "補空白範圍跟著保存天數")
+    // 超過 30 天的部分每小時一筆，不算空白；超過 2 小時沒資料才算
+    let hourlyOld = stride(from: 60 * 86400.0, through: 31 * 86400, by: -3600).map { now.addingTimeInterval(-$0) }
+    let steadyRecent = stride(from: 31 * 86400.0 - 300, through: 0, by: -300).map { now.addingTimeInterval(-$0) }
+    check(DeviceHistory.gapStart(points: hourlyOld + steadyRecent, now: now, coveredUntil: now.addingTimeInterval(-60 * 86400 - 60), retentionDays: 90) == nil,
+          "超過 30 天每小時一筆不算空白")
+
+    // 壓縮：超過保存天數刪除，超過 30 天合併成每小時一筆，最近 30 天不動
+    let base = Date(timeIntervalSince1970: (now.timeIntervalSince1970 / 3600).rounded(.down) * 3600)
+    func pt(_ ago: TimeInterval, _ t: Double) -> HistoryPoint {
+        HistoryPoint(timestamp: base.addingTimeInterval(-ago), temperature: t, humidity: 50, voltage: 3, batteryPercent: 90)
+    }
+    let raw = [pt(100 * 86400, 1), pt(40 * 86400 - 600, 20), pt(40 * 86400 - 1200, 22), pt(86400, 25), pt(86400 - 300, 26)]
+    let compacted = DeviceHistory.compact(raw, now: base, retentionDays: 90)
+    check(compacted.count == 3, "過期刪除、同一小時合併")
+    check(compacted[0].temperature == 21 && compacted[0].timestamp == base.addingTimeInterval(-40 * 86400 + 1800), "合併後放在該小時中間並取平均")
+    check(Array(compacted[1...]) == [pt(86400, 25), pt(86400 - 300, 26)], "最近 30 天完整保留")
+    check(DeviceHistory.compact(compacted, now: base, retentionDays: 90) == compacted, "重複壓縮結果不變")
+    check(DeviceHistory.startIndex(total: 0, stored: 0, since: now, now: now) == nil, "裝置沒有紀錄")
+    check(DeviceHistory.recordIndex(hex("05000000201C0000FD00FFF1FF28")) == 5, "數值不合理仍取得 index")
+
+    // 裝置時間 30000；兩筆分別在 2 小時前、6 小時前開始；已有讀數在 1.5 小時前附近
+    let existing = [HistoryPoint(timestamp: now.addingTimeInterval(-3600 - 1800 + 300), temperature: 20, humidity: 50, voltage: 3, batteryPercent: 90)]
+    let records = [
+        HourlyRecord(index: 1, deviceTime: 30000 - 6 * 3600, maxTemperature: 22, maxHumidity: 60, minTemperature: 20, minHumidity: 50),
+        HourlyRecord(index: 2, deviceTime: 30000 - 2 * 3600, maxTemperature: 30, maxHumidity: 70, minTemperature: 28, minHumidity: 60),
+        HourlyRecord(index: 3, deviceTime: 40000, maxTemperature: 30, maxHumidity: 70, minTemperature: 28, minHumidity: 60),
+    ]
+    let merged = DeviceHistory.fill(existing: existing, records: records, deviceNow: 30000, now: now, voltage: 2.9, battery: 80)
+    check(merged.count == 2, "已有讀數的時段與未來時間不補")
+    check(merged.first?.timestamp == now.addingTimeInterval(-6 * 3600 + 1800) && merged.first?.temperature == 21
+          && merged.first?.humidity == 55 && merged.first?.batteryPercent == 80, "補在該小時中間並取平均")
+    check(merged.last == existing[0], "依時間排序且保留原讀數")
+    check(DeviceHistory.fill(existing: existing, records: [], deviceNow: 0, now: now, voltage: 3, battery: 90) == existing, "沒有紀錄不變")
+}
+
 try? FileManager.default.removeItem(at: testRoot)
 print("通過 \(passed) 項，失敗 \(failures) 項")
 exit(failures == 0 ? 0 : 1)

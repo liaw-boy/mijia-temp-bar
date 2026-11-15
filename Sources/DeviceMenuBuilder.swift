@@ -14,6 +14,8 @@ protocol DeviceCoordinator: AnyObject {
     func renameDevice(_ id: String)
     func removeDevice(_ id: String)
     func openDeviceSearch()
+    /// 歷史保存天數變長：清掉「裝置歷史已讀到哪裡」的紀錄，讓更早的空白也能補
+    func historyRetentionExtended()
     func openSettings()
     func quit()
 }

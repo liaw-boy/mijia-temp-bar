@@ -89,6 +89,7 @@ class PollEngine:
         self._current: Optional[asyncio.Future] = None
         self._current_id: Optional[str] = None
         self._preempted = False
+        self.hold_preemption = False  # 讀裝置歷史期間 (當下數值已讀到) 不讓手動更新插隊，否則會丟掉讀數
         self._wake = asyncio.Event()
         self._idle = asyncio.Event()
         self._idle.set()
@@ -128,7 +129,7 @@ class PollEngine:
             if key not in self._priority:
                 self._priority.append(key)
         current = self._runtimes.get(self._current_id) if self._current_id else None
-        if (self._current is not None and self._current_id not in targets
+        if (self._current is not None and self._current_id not in targets and not self.hold_preemption
                 and current is not None and (current.failures > 0 or current.was_failing)):
             # 讀取剛好已結束時 cancel() 回傳 False，不能留下旗標，否則之後關閉時的取消會被當成插隊吞掉
             self._preempted = self._current.cancel()

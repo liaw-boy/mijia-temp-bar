@@ -20,7 +20,7 @@ except (ValueError, ImportError):
     gi.require_version("AppIndicator3", "0.1")
     from gi.repository import AppIndicator3 as AppIndicator  # noqa: E402
 
-from . import device_dialogs, notifications, update_check  # noqa: E402
+from . import device_dialogs, device_history, notifications, update_check  # noqa: E402
 from .bluetooth import DISCOVERY_SECONDS, BluetoothManager  # noqa: E402
 from .device_menu import DeviceMenu  # noqa: E402
 from .device_state import (  # noqa: E402
@@ -412,6 +412,36 @@ class StatusBarController:
         notifications.check_reading(self.app, device_id, device.name, reading, now)
         notifications.check_humidity(self.app, device_id, device.name, reading, now)
         self._schedule_status_write()
+
+    def history_gap_start(self, device_id: str, interval: float) -> Optional[float]:
+        covered = settings.get(device_history.COVERED_KEY)
+        covered_until = covered.get(device_id) if isinstance(covered, dict) else None
+        if not isinstance(covered_until, (int, float)):
+            covered_until = None
+        timestamps = [p.timestamp for p in HistoryManager.for_device(device_id).points]
+        retention = device_history.retention_days(settings.get(device_history.RETENTION_KEY))
+        return device_history.gap_start(timestamps, time.time(), covered_until, interval, retention)
+
+    def history_retention_extended(self) -> None:
+        """保存天數變長：清掉「裝置歷史已讀到哪裡」，讓更早的空白也能補。"""
+        settings.set(device_history.COVERED_KEY, {})
+
+    def did_receive_hourly_history(self, device_id: str, records: list, device_now: int,
+                                   reading: SensorReading, covered_through: Optional[float]) -> None:
+        if self.device_store.get(device_id) is None:
+            return
+        if covered_through is not None:  # 裝置歷史已讀到這裡：之前補不到的空白 (裝置也沒紀錄) 之後不再重讀
+            covered = settings.get(device_history.COVERED_KEY)
+            covered = dict(covered) if isinstance(covered, dict) else {}
+            covered[device_id] = covered_through
+            settings.set(device_history.COVERED_KEY, covered)
+        history = HistoryManager.for_device(device_id)
+        before = len(history.points)
+        merged = device_history.fill(history.points, records, device_now, time.time(),
+                                     reading.voltage, reading.battery_percent)
+        if len(merged) > before:
+            history.replace_all(merged)
+            mijia_log(f"用裝置歷史補上 {len(merged) - before} 筆空白 [{device_id}]")
 
     def _record_history(self, device_id: str, reading: SensorReading) -> None:
         """開源廣播依更新間隔取樣 (避免每幾秒就寫一次檔)；原廠讀數每筆都記錄。"""

@@ -48,6 +48,8 @@
   - **分頁專題走勢**：支援切換「溫度 / 濕度 / 電壓」。
   - **智慧避讓懸停氣泡 (Hover HUD)**：滑鼠移動時同步標記三色光暈點位，當數值位於圖表頂端時自動翻轉避讓，確保資訊絕不遮蔽。
   - **CSV 數據匯出**：一鍵將完整採樣歷史匯出為標準 CSV 格式。
+  - **自動補上空白**：電腦睡眠或不在家期間沒有讀數時，下次連上會讀回溫濕度計內存的每小時紀錄（原廠韌體，免綁定），把圖表的空白補起來；補上的點取該小時最高與最低的平均。平常只讀當下數值，只有空白超過 1 小時才多讀；保存天數內的舊空白也會分段補上。
+  - **歷史保存天數**：設定頁可選 30／90／180 天或 1 年（預設 30 天）。最近 30 天完整保留，更舊的每小時留一筆，1 年約 2 MB。
 
 ### 3. 全新整合型原生偏好設定頁面 (Preferences & Settings)
 在面板頂部切換「設定」分頁：
@@ -151,7 +153,7 @@ CR2032 鈕扣電池在壽命末期（電壓跌破 2.60V）會進入斷崖式崩�
 ### macOS 版本
 
 #### 方式 1：直接下載發行版本（最推薦）
-1. 前往 **[Releases 頁面](https://github.com/liaw-boy/mijia-temp-bar/releases)** 下載最新版 `MijiaTempBar-v1.9.0.zip`。
+1. 前往 **[Releases 頁面](https://github.com/liaw-boy/mijia-temp-bar/releases)** 下載最新版 `MijiaTempBar-v1.9.1.zip`。
 2. 解壓縮後將 `MijiaTempBar.app` 拖移至 `/Applications`（應用程式）資料夾。
 3. 雙擊啟動即可！（首次啟動若系統跳出「想使用藍牙」，請點選允許）。
 
@@ -242,6 +244,7 @@ mijia-temp-bar/
 │   ├── DeviceView.swift              # 隨數據變化的裝置示意圖 (程式繪製)
 │   ├── ChartView.swift               # CoreGraphics 雙 Y 軸、三線走勢圖、時間比例 X 軸、HUD 氣泡
 │   ├── HistoryManager.swift          # 歷史資料持久化、JSON 儲存、CSV 匯出
+│   ├── DeviceHistory.swift           # 讀回裝置內存的每小時紀錄並補空白
 │   ├── NotificationManager.swift     # 低電量預警診斷、macOS 系統橫幅推播、24h 防干擾冷卻
 │   ├── UpdateChecker.swift           # GitHub release 更新檢查 (只提示、不自動安裝)
 │   ├── LocationGatekeeper.swift      # 居家大範圍地理圍欄、網路閘道錨點、離家停機與進門喚醒

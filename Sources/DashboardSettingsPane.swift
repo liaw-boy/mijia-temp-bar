@@ -60,7 +60,7 @@ extension DashboardWindowController {
             return p
         }
 
-        // 0. 裝置 (固定高度的一列，清單操作交給「管理…」跳出的選單)
+        // 0. 裝置 (每台一列，改名／移除直接按)
         addDevicesSection(at: &cursor)
 
         // 1. 更新與省電
@@ -84,6 +84,17 @@ extension DashboardWindowController {
         customIntervalField.action = #selector(handleCustomIntervalEntered)
         addRow(to: card, title: "更新間隔", caption: "間隔越長越省電；自訂請輸入分鐘後按 Enter。",
                controls: [intervalPopUp, customIntervalField])
+        let retention = popUp(200)
+        for days in DeviceHistory.retentionOptions {
+            let item = NSMenuItem(title: days == 365 ? "1 年" : "\(days) 天", action: nil, keyEquivalent: "")
+            item.representedObject = days
+            retention.menu?.addItem(item)
+        }
+        retention.target = self
+        retention.action = #selector(handleRetentionChanged)
+        retentionPopUp = retention
+        addRow(to: card, title: "歷史保存天數", caption: "最近 30 天完整保留，更舊的每小時留一筆；空白會用溫濕度計內存的紀錄補上。",
+               controls: [retention])
         endSection(card, at: &cursor)
 
         // 2. 狀態列
@@ -263,6 +274,7 @@ extension DashboardWindowController {
 
     // MARK: - 設定頁面數值載入
     func reloadSettingsValues() {
+        retentionPopUp?.selectItem(at: DeviceHistory.retentionOptions.firstIndex(of: HistoryManager.retentionDays) ?? 0)
         // Wi-Fi 狀態
         wifiCheckbox.state = LocationGatekeeper.shared.isWiFiOnlyEnabled ? .on : .off
         wifiSSIDTextField.stringValue = LocationGatekeeper.shared.targetWiFiSSID ?? ""
@@ -573,36 +585,104 @@ extension DashboardWindowController {
         onSettingsChanged?()
     }
 
-    // MARK: - 裝置區塊
+    @objc private func handleRetentionChanged() {
+        guard let days = retentionPopUp?.selectedItem?.representedObject as? Int else { return }
+        let old = HistoryManager.retentionDays
+        guard days != old else { return }
+        if days < old {
+            // 縮短會刪掉較舊的紀錄，無法復原：先確認
+            let alert = NSAlert()
+            alert.messageText = "縮短歷史保存天數？"
+            alert.informativeText = "超過 \(days) 天的紀錄會在下次更新時刪除，無法復原。"
+            alert.addButton(withTitle: "縮短")
+            alert.addButton(withTitle: "取消")
+            alert.buttons[0].keyEquivalent = ""     // 會刪資料：按 Enter 預設是取消
+            alert.buttons[1].keyEquivalent = "\r"
+            guard alert.runModal() == .alertFirstButtonReturn else {
+                retentionPopUp?.selectItem(at: DeviceHistory.retentionOptions.firstIndex(of: old) ?? 0)
+                return
+            }
+        } else {
+            coordinator?.historyRetentionExtended()  // 範圍變大：重新檢查更早的空白
+        }
+        HistoryManager.retentionDays = days
+        mijiaLog("歷史保存天數改為 \(days) 天")
+    }
+
+    // MARK: - 裝置區塊 (每台一列，操作按鈕直接放在列上)
     private func addDevicesSection(at cursor: inout CGFloat) {
         let card = beginSection("裝置", at: &cursor)
-        let manage = NSButton(title: "管理…", target: self, action: #selector(handleManageDevices(_:)))
-        manage.bezelStyle = .rounded
-        manage.frame.size = NSSize(width: 72, height: 24)
-        let search = NSButton(title: "搜尋新裝置…", target: self, action: #selector(handleSearchDevices))
-        search.bezelStyle = .rounded
-        search.frame.size = NSSize(width: 104, height: 24)
-        addRow(to: card, title: "尚未加入裝置", caption: "每台可設為狀態列顯示、改名或移除；移除不會刪除歷史紀錄。",
-               controls: [manage, search])
-        deviceSummaryTitle = card.lastTitle
+        deviceCard = card
+        buildDeviceRows(card)
         endSection(card, at: &cursor)
     }
 
-    func reloadDeviceSection() {
-        guard let title = deviceSummaryTitle else { return }
+    private func buildDeviceRows(_ card: SettingsSection) {
+        card.subviews.forEach { $0.removeFromSuperview() }
+        card.nextY = 4
         let devices = coordinator?.devices ?? []
-        if devices.isEmpty {
-            title.stringValue = "尚未加入裝置"
-        } else {
-            let primary = devices.first { $0.id == coordinator?.primaryID }?.name ?? "-"
-            title.stringValue = "共 \(devices.count) 台 · 狀態列顯示：\(primary)"
+        let primaryID = coordinator?.primaryID
+        deviceRowIDs = devices.map(\.id)
+
+        func small(_ title: String, _ width: CGFloat, _ action: Selector, tag: Int) -> NSButton {
+            let b = NSButton(title: title, target: self, action: action)
+            b.bezelStyle = .rounded
+            b.controlSize = .small
+            b.font = NSFont.systemFont(ofSize: 11)
+            b.frame.size = NSSize(width: width, height: 22)
+            b.tag = tag
+            return b
         }
+        for (i, device) in devices.enumerated() {
+            let isPrimary = device.id == primaryID
+            var controls: [NSView] = []
+            if devices.count > 1 && !isPrimary {
+                controls.append(small("顯示在狀態列", 96, #selector(handleRowMakePrimary(_:)), tag: i))
+            }
+            controls.append(small("重新命名…", 78, #selector(handleRowRename(_:)), tag: i))
+            controls.append(small("移除…", 56, #selector(handleRowRemove(_:)), tag: i))
+            let star = devices.count > 1 && isPrimary ? "  ★ 狀態列顯示中" : ""
+            addRow(to: card, title: device.name + star, caption: deviceCaption(device.id), controls: controls)
+        }
+        let search = small("搜尋新裝置…", 96, #selector(handleSearchDevices), tag: -1)
+        addRow(to: card, title: devices.isEmpty ? "尚未加入裝置" : "加入其他溫濕度計",
+               caption: "掃描附近的裝置後勾選加入；移除裝置不會刪除它的歷史紀錄。", controls: [search])
     }
 
-    @objc private func handleManageDevices(_ sender: NSButton) {
-        guard let coordinator = coordinator else { return }
-        let menu = DeviceMenuBuilder.deviceMenu(for: coordinator)
-        _ = menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
+    private func deviceCaption(_ id: String) -> String {
+        guard let state = coordinator?.state(for: id) else { return "" }
+        guard let r = state.reading else { return state.status }
+        return "\(DisplayRules.formatTemp(r.temperature))° · \(DisplayRules.formatHum(r.humidity))% · 電量 \(r.batteryPercent)% · \(state.status)"
+    }
+
+    /// 裝置清單或讀數改變時重建裝置列；高度改變時把下面的區塊一起移動
+    func reloadDeviceSection() {
+        guard let card = deviceCard else { return }
+        let oldHeight = card.frame.height
+        buildDeviceRows(card)
+        card.frame.size.height = card.nextY + 4
+        let delta = card.frame.height - oldHeight
+        guard delta != 0 else { return }
+        for v in settingsContentView.subviews where v !== card && v.frame.minY > card.frame.minY {
+            v.frame.origin.y += delta
+        }
+        settingsContentView.frame.size.height = max(settingsContentView.frame.height + delta, 535)
+    }
+
+    private func rowDeviceID(_ sender: NSButton) -> String? {
+        deviceRowIDs.indices.contains(sender.tag) ? deviceRowIDs[sender.tag] : nil
+    }
+
+    @objc private func handleRowMakePrimary(_ sender: NSButton) {
+        if let id = rowDeviceID(sender) { coordinator?.setPrimary(id) }
+    }
+
+    @objc private func handleRowRename(_ sender: NSButton) {
+        if let id = rowDeviceID(sender) { coordinator?.renameDevice(id) }
+    }
+
+    @objc private func handleRowRemove(_ sender: NSButton) {
+        if let id = rowDeviceID(sender) { coordinator?.removeDevice(id) }
     }
 
     @objc private func handleSearchDevices() {

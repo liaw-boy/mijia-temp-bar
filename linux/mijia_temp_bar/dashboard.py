@@ -15,13 +15,14 @@ gi.require_version("GdkPixbuf", "2.0")
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gdk, GdkPixbuf, GLib, Gtk, Pango  # noqa: E402
 
-from . import autostart, notifications, update_check  # noqa: E402
+from . import autostart, device_history, notifications, update_check  # noqa: E402
 from .chart import ChartDataType, ChartView  # noqa: E402
 from .device_view import create_device_view  # noqa: E402
 from .devices import KIND_STOCK, file_id  # noqa: E402
 from .history import HistoryManager  # noqa: E402
 from .icons import render_app_icon  # noqa: E402
 from .logger import mijia_log  # noqa: E402
+from .settings import settings  # noqa: E402
 from .options import (  # noqa: E402
     CHART_RANGES,
     DEFAULT_CHART_RANGE_INDEX,
@@ -475,6 +476,12 @@ class DashboardWindow(Gtk.Window):
         self.custom_interval_entry.connect("activate", self._handle_custom_interval)
         self._add_row(card, "更新間隔", "間隔越長越省電；自訂請輸入分鐘後按 Enter。",
                       [self.interval_combo, self.custom_interval_entry])
+        self.retention_combo = Gtk.ComboBoxText()
+        for days in device_history.RETENTION_OPTIONS:
+            self.retention_combo.append_text("1 年" if days == 365 else f"{days} 天")
+        self.retention_combo.connect("changed", self._handle_retention_selected)
+        self._add_row(card, "歷史保存天數", "最近 30 天完整保留，更舊的每小時留一筆；空白會用溫濕度計內存的紀錄補上。",
+                      [self.retention_combo])
 
         # 狀態列
         card = self._section(page, "狀態列")
@@ -576,6 +583,8 @@ class DashboardWindow(Gtk.Window):
             current = bt.refresh_interval
             index = next((i for i, (_t, sec) in enumerate(INTERVALS) if abs(sec - current) < 0.1), -1)
             self.interval_combo.set_active(index)
+            retention = device_history.retention_days(settings.get(device_history.RETENTION_KEY))
+            self.retention_combo.set_active(device_history.RETENTION_OPTIONS.index(retention))
             self.custom_interval_entry.set_text("" if index >= 0 else describe_interval(current).split(" ")[0])
             self.custom_interval_entry.set_tooltip_text(None if index >= 0 else f"目前自訂：{describe_interval(current)}")
 
@@ -603,6 +612,31 @@ class DashboardWindow(Gtk.Window):
             return
         self.controller.bluetooth_manager.set_refresh_interval(INTERVALS[index][1])
         self.reload_settings()
+
+    def _handle_retention_selected(self, combo: Gtk.ComboBoxText) -> None:
+        index = combo.get_active()
+        if self._loading or index < 0:
+            return
+        days = device_history.RETENTION_OPTIONS[index]
+        old = device_history.retention_days(settings.get(device_history.RETENTION_KEY))
+        if days == old:
+            return
+        if days < old:
+            # 縮短會刪掉較舊的紀錄，無法復原：先確認
+            dialog = Gtk.MessageDialog(transient_for=self, modal=True, message_type=Gtk.MessageType.WARNING,
+                                       buttons=Gtk.ButtonsType.NONE, text="縮短歷史保存天數？")
+            dialog.format_secondary_text(f"超過 {days} 天的紀錄會在下次更新時刪除，無法復原。")
+            dialog.add_buttons("取消", Gtk.ResponseType.CANCEL, "縮短", Gtk.ResponseType.OK)
+            dialog.set_default_response(Gtk.ResponseType.CANCEL)
+            response = dialog.run()
+            dialog.destroy()
+            if response != Gtk.ResponseType.OK:
+                self.reload_settings()
+                return
+        else:
+            self.controller.history_retention_extended()  # 範圍變大：重新檢查更早的空白
+        settings.set(device_history.RETENTION_KEY, days)
+        mijia_log(f"歷史保存天數改為 {days} 天")
 
     def _handle_custom_interval(self, entry: Gtk.Entry) -> None:
         seconds = parse_interval_minutes(entry.get_text())

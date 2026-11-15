@@ -10,6 +10,7 @@ BlueZ 每個程式同時只能有一個掃描，而 BleakClient 連線前自己�
 import asyncio
 import contextlib
 import math
+import struct
 import threading
 import time
 from dataclasses import dataclass
@@ -24,6 +25,7 @@ from bleak.exc import (
     BleakError,
 )
 
+from . import device_history
 from .devices import KIND_BROADCAST, KIND_STOCK, Device, normalize_id
 from .discovery import Candidate, DiscoverySession, broadcast_measurement, make_candidate
 from .logger import mijia_log
@@ -35,7 +37,7 @@ from .settings import settings
 CHAR_UUID = "ebe0ccc1-7a0a-4b0c-8a1a-6ff2997da3a6"
 
 CONNECT_TIMEOUT = 25.0             # 給予充足時間接收低功耗廣播封包並完成連線
-READ_TIMEOUT = CONNECT_TIMEOUT + 20.0
+READ_TIMEOUT = CONNECT_TIMEOUT + 20.0 + device_history.TOTAL_TIMEOUT  # 含順便讀裝置歷史的時間
 BROADCAST_MIN_INTERVAL = 10.0      # 開源廣播模式下每台裝置最短的介面更新間隔
 DISCOVERY_SECONDS = 20.0           # 搜尋新裝置的掃描時間
 DISCOVERY_UPDATE_SECONDS = 1.0     # 搜尋期間回報進度的間隔
@@ -48,6 +50,9 @@ class BluetoothManagerDelegate(Protocol):
     def did_update_device_status(self, device_id: str, status: str, reachable: Optional[bool]) -> None: ...
     def did_update_reading(self, device_id: str, reading: SensorReading) -> None: ...
     def did_fail_with_error(self, error: str) -> None: ...
+    def history_gap_start(self, device_id: str, interval: float) -> Optional[float]: ...
+    def did_receive_hourly_history(self, device_id: str, records: list, device_now: int,
+                                   reading: SensorReading, covered_through: Optional[float]) -> None: ...
 
 
 def load_refresh_interval() -> float:
@@ -124,6 +129,8 @@ class BluetoothManager:
         self._scan_paused_at: Optional[float] = None
         self._adapter_ok = True
         self._closing = False
+        self._last_history_attempt: Dict[str, float] = {}
+        self._history_partial: tuple = (None, [])  # 讀歷史中途失敗時保留已收到的部分
 
         mijia_log(f"BluetoothManager 初始化 (多裝置省電輪詢模式，設定間隔: {int(self.refresh_interval)} 秒)...")
 
@@ -242,11 +249,151 @@ class BluetoothManager:
                 f"收到原廠數據: 溫度={measurement.temperature}°C, 濕度={measurement.humidity}%, "
                 f"電壓={measurement.voltage}V, 電量={measurement.battery_percent}% [{address}]"
             )
+            reading = make_reading(measurement, name, rssi=None, is_broadcast=False)
+            # 歷史有超過 1 小時的空白 (電腦睡眠、不在範圍內) 才順便讀裝置內存的每小時紀錄
+            await self._maybe_read_history(client, address, reading)
+
             # ★ 極致省電核心機制：讀取完畢立刻斷開 BLE 連線 (離開 async with 即斷線)，
             # 讓 TLSR8251 晶片立刻回到 Deep Sleep，鈕扣電池負載消失、電壓不再虛降。
             mijia_log(f"數據讀取完成，立刻主動斷開連線以讓硬體休眠省電 (下次連線間隔: {int(self.refresh_interval)} 秒)...")
 
-        return make_reading(measurement, name, rssi=None, is_broadcast=False)
+        return reading
+
+    async def _maybe_read_history(self, client: BleakClient, address: str, reading: SensorReading) -> None:
+        now = time.time()
+        last_try = self._last_history_attempt.get(address)
+        if last_try is not None and now - last_try < device_history.RETRY_INTERVAL:
+            return
+        interval = self.refresh_interval
+        try:
+            since = await self._ask_main(lambda d: d.history_gap_start(address, interval))
+            if since is not None:
+                since = float(since)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # 取不到歷史就這次不讀，當下讀數照常
+            mijia_log(f"無法檢查歷史空白 [{address}]: {e or type(e).__name__}")
+            return
+        if since is None:
+            return
+        self._last_history_attempt[address] = now
+        mijia_log(f"歷史有空白，讀取裝置內存的每小時紀錄 (從 {datetime.fromtimestamp(since):%m/%d %H:%M} 起) [{address}]...")
+        records: List[device_history.HourlyRecord] = []
+        device_now: Optional[int] = None
+        complete = False      # 這一段讀到最後一筆為止 (或裝置沒有紀錄)
+        reached_end = False   # 讀到裝置最新的一筆
+        hours_behind = 0      # 這一段結尾比最新一筆早幾小時
+        self._engine.hold_preemption = True
+        try:
+            device_now, records, reached_end, hours_behind = await asyncio.wait_for(
+                self._read_history(client, since), device_history.TOTAL_TIMEOUT)
+            complete = True
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # 讀歷史失敗不影響當下讀數；保留已收到的部分
+            mijia_log(f"讀取裝置歷史沒有讀完 [{address}]: {e or type(e).__name__}")
+            device_now, records = self._history_partial
+        finally:
+            self._engine.hold_preemption = False
+        if device_now is None or not (records or complete):
+            return
+        now = time.time()
+        if reached_end:
+            covered: Optional[float] = now
+        elif complete:  # 這一段讀完 (即使都是無效紀錄也往前推進)：每筆一小時，依 index 換算這段結尾的時間
+            covered = now - hours_behind * 3600
+        elif records:
+            covered = device_history.real_end(max(records, key=lambda r: r.index), device_now, now)
+        else:
+            covered = None
+        if complete and not reached_end:
+            self._last_history_attempt.pop(address, None)  # 這一段讀完了，下次連線就接著讀下一段
+        note = "" if reached_end else (" (還有更新的，下次接著讀)" if complete else " (未讀完)")
+        mijia_log(f"收到裝置歷史 {len(records)} 筆 [{address}]{note}")
+        self._emit("did_receive_hourly_history", address, records, device_now, reading, covered)
+
+    async def _read_history(self, client: BleakClient, since: float):
+        self._history_partial = (None, [])
+        device_now = device_history.parse_device_time(bytes(await client.read_gatt_char(device_history.TIME_UUID)))
+        count = device_history.parse_count(bytes(await client.read_gatt_char(device_history.COUNT_UUID)))
+        if device_now is None or count is None:
+            raise BleakError("無法解析裝置時間或筆數")
+        total, stored = count
+        start = device_history.start_index(total, stored, since, time.time())
+        if start is None:
+            mijia_log("裝置沒有可讀的歷史紀錄")
+            return device_now, [], True, 0
+        last = device_history.chunk_end(start, total)  # 一次最多 30 天，更早的下次接著讀
+        records: List[device_history.HourlyRecord] = []
+        self._history_partial = (device_now, records)
+        done = asyncio.Event()
+        progress = asyncio.Event()  # 每收到一筆就設定，用來判斷資料是否還在進來
+        written = False
+        last_seen = False
+        seen: set = set()  # 已收到的 index
+
+        def on_record(_char, data: bytearray) -> None:
+            nonlocal last_seen
+            raw = bytes(data)
+            index = device_history.record_index(raw)
+            # 訂閱後、寫入起始 index 前裝置會先推幾筆舊的 (實機確認)：比起始舊的略過
+            if index is None or not start <= index <= last:  # 只收這一段範圍內的 (先推的舊紀錄可能落在範圍外)
+                return
+            progress.set()  # 範圍內的才算資料還在進來
+            if index in seen:  # 同一筆重送就不再收 (裝置資料不可信)
+                return
+            seen.add(index)
+            rec = device_history.parse_record(raw)  # 數值不合理就不收，但仍要判斷是否最後一筆
+            if rec is not None and len(records) < device_history.MAX_RECORDS:
+                records.append(rec)
+            # 寫入起始 index 之後才認最後一筆 (先推的舊紀錄可能剛好落在範圍內)；重複的由 fill 去掉
+            if index >= last:
+                last_seen = True
+                if written:
+                    done.set()
+
+        await client.start_notify(device_history.RECORDS_UUID, on_record)
+        try:
+            mijia_log(f"讀取裝置歷史: 從第 {start} 筆到第 {last} 筆 (裝置時間 {device_now})")
+            await client.write_gatt_char(device_history.INDEX_UUID, struct.pack("<I", start), response=True)
+            written = True
+            if last_seen:
+                # 最後一筆在寫入回應前就到了 (可能是寫入前先推的舊紀錄)：再等一下，沒有新的就結束
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(done.wait(), 2.0)
+            else:
+                while not done.is_set():
+                    progress.clear()
+                    try:
+                        await asyncio.wait_for(progress.wait(), device_history.IDLE_TIMEOUT)
+                    except asyncio.TimeoutError:
+                        raise BleakError("超過 10 秒沒有收到下一筆") from None
+        finally:
+            with contextlib.suppress(Exception):
+                await client.stop_notify(device_history.RECORDS_UUID)
+        return device_now, records, last >= total - 1, total - 1 - last
+
+    async def _ask_main(self, fn: Callable):
+        """在 GTK 主執行緒執行 fn(delegate) 並取回結果 (歷史只在主執行緒存取)。"""
+        delegate = self.delegate
+        if delegate is None:
+            return None
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+
+        def run() -> None:
+            def settle(setter, value) -> None:
+                if not future.done():  # 已逾時就不設值 (避免 InvalidStateError)
+                    setter(value)
+            try:
+                result = fn(delegate)
+            except Exception as e:  # 主執行緒出錯也不能讓藍牙執行緒一直等
+                loop.call_soon_threadsafe(settle, future.set_exception, e)
+            else:
+                loop.call_soon_threadsafe(settle, future.set_result, result)
+
+        self._dispatch(run)
+        return await asyncio.wait_for(future, 5.0)
 
     @contextlib.asynccontextmanager
     async def _gatt_session(self):

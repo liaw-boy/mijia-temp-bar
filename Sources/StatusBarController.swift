@@ -20,6 +20,7 @@ final class StatusBarController: NSObject {
     private var lastStatusWrite = Date.distantPast
 
     private let popover = NSPopover()
+    private var popoverAnchorWidth: CGFloat = 0  // 面板打開時狀態列圖示的寬度
     private var outsideClickMonitor: Any?
     private var dashboardController: DashboardWindowController?
     private var searchWindow: DeviceSearchWindowController?
@@ -97,6 +98,11 @@ final class StatusBarController: NSObject {
             button.target = self
             button.action = #selector(handleStatusButtonClick)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            // 圖示寬度變了 (換樣式、文字長度) 才重新定位面板；狀態列調整寬度的時機不固定，直接監聽尺寸變化
+            button.postsFrameChangedNotifications = true
+            NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: button, queue: .main) { [weak self] _ in
+                self?.reanchorPopoverIfNeeded()
+            }
         }
     }
 
@@ -112,6 +118,8 @@ final class StatusBarController: NSObject {
             self?.displayStyle = style
             UserDefaults.standard.set(style.rawValue, forKey: "DisplayStyle")
             self?.updateTitle()
+            // 換樣式後圖示寬度與位置會變：等狀態列排好，一律在新位置重新顯示面板
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { self?.reanchorPopoverIfNeeded(force: true) }
         }
         dashboard.onHideWhenDisconnectedChanged = { [weak self] hide in
             self?.hideWhenDisconnected = hide
@@ -162,11 +170,29 @@ final class StatusBarController: NSObject {
         NSApp.activate(ignoringOtherApps: true)
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
+        popoverAnchorWidth = button.bounds.width
+        installOutsideClickMonitor()
+    }
 
-        // 常駐型 (accessory) App 的 transient 面板不會因點擊其他 App 而收起，自行監聽外部點擊
+    /// 常駐型 (accessory) App 的 transient 面板不會因點擊其他 App 而收起，自行監聽外部點擊
+    private func installOutsideClickMonitor() {
+        if let monitor = outsideClickMonitor { NSEvent.removeMonitor(monitor) }
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
             self?.popover.performClose(nil)
         }
+    }
+
+    /// 圖示寬度變了 (換樣式、文字長度改變)：狀態列會移動圖示的視窗，面板不會跟著動，
+    /// 只改 positioningRect 也無效，所以不帶動畫關掉再於新位置打開
+    private func reanchorPopoverIfNeeded(force: Bool = false) {
+        guard popover.isShown, let b = statusItem.button, force || abs(b.bounds.width - popoverAnchorWidth) > 0.5 else { return }
+        popover.animates = false
+        popover.close()
+        popover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY)
+        popover.contentViewController?.view.window?.makeKey()
+        popover.animates = true
+        popoverAnchorWidth = b.bounds.width
+        installOutsideClickMonitor()
     }
 
     /// 右鍵選單：裝置清單、搜尋、全部更新、設定、結束
@@ -402,6 +428,35 @@ extension StatusBarController: BluetoothManagerDelegate {
         adapterHint = error
         dashboardController?.refreshStatus()
     }
+
+    private static let backfillCoveredKey = "HistoryBackfillCoveredUntil"  // [裝置 id: 上次完整讀過裝置歷史的時間]
+
+    func historyRetentionExtended() {
+        UserDefaults.standard.removeObject(forKey: Self.backfillCoveredKey)
+    }
+
+    func historyGapStart(deviceID: String, interval: TimeInterval) -> Date? {
+        let covered = (UserDefaults.standard.dictionary(forKey: Self.backfillCoveredKey) as? [String: Date])?[deviceID]
+        return DeviceHistory.gapStart(points: HistoryManager.forDevice(deviceID).points.map(\.timestamp), now: Date(),
+                                      coveredUntil: covered, interval: interval, retentionDays: HistoryManager.retentionDays)
+    }
+
+    func didReceiveHourlyHistory(_ records: [HourlyRecord], deviceNow: UInt32, reading: SensorReading,
+                                 deviceID: String, coveredThrough: Date?) {
+        guard deviceStore.device(deviceID) != nil else { return }
+        if let through = coveredThrough {
+            var covered = UserDefaults.standard.dictionary(forKey: Self.backfillCoveredKey) as? [String: Date] ?? [:]
+            covered[deviceID] = through
+            UserDefaults.standard.set(covered, forKey: Self.backfillCoveredKey)
+        }
+        let history = HistoryManager.forDevice(deviceID)
+        let before = history.points.count
+        let merged = DeviceHistory.fill(existing: history.points, records: records, deviceNow: deviceNow, now: Date(),
+                                        voltage: reading.voltage, battery: reading.batteryPercent)
+        guard merged.count > before else { return }
+        history.replaceAll(merged)
+        mijiaLog("用裝置歷史補上 \(merged.count - before) 筆空白 [\(deviceID)]")
+    }
 }
 
 // MARK: - LocationGatekeeperDelegate
@@ -414,6 +469,7 @@ extension StatusBarController: LocationGatekeeperDelegate {
 // MARK: - NSPopoverDelegate
 extension StatusBarController: NSPopoverDelegate {
     func popoverDidClose(_ notification: Notification) {
+        guard !popover.isShown else { return }  // 重新定位時關掉又立刻打開：保留外部點擊監聽
         if let monitor = outsideClickMonitor {
             NSEvent.removeMonitor(monitor)
             outsideClickMonitor = nil

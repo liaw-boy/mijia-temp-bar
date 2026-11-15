@@ -28,7 +28,18 @@ final class HistoryManager {
     private(set) var points: [HistoryPoint] = []
     let storageURL: URL
     private var readOnly = false  // 讀不到或無法另存原檔時不寫入，避免蓋掉使用者的歷史
-    private let maxPoints = 8640 // 最多保留 30 天 (5分鐘間隔 = 8640筆)
+    /// 筆數保險上限：更新間隔最短 10 秒時，最近 30 天的完整資料約 26 萬筆，加上壓縮後的舊資料
+    private let maxPoints = 300_000
+
+    static let retentionKey = "HistoryRetentionDays"
+    /// 歷史保存天數 (設定頁可選)；最近 30 天完整保留，更舊的每小時留一筆
+    static var retentionDays: Int {
+        get {
+            let d = UserDefaults.standard.integer(forKey: retentionKey)
+            return DeviceHistory.retentionOptions.contains(d) ? d : DeviceHistory.retentionOptions[0]
+        }
+        set { UserDefaults.standard.set(newValue, forKey: retentionKey) }
+    }
 
     init(storageURL: URL) {
         self.storageURL = storageURL
@@ -39,15 +50,21 @@ final class HistoryManager {
 
     func addPoint(temp: Double, hum: Double, volt: Double, battery: Int, at date: Date = Date()) {
         points.append(HistoryPoint(timestamp: date, temperature: temp, humidity: hum, voltage: volt, batteryPercent: battery))
+        compactAndSave()
+    }
+
+    /// 遷移回填或用裝置歷史補空白後整批寫回
+    func replaceAll(_ newPoints: [HistoryPoint]) {
+        points = newPoints
+        compactAndSave()
+    }
+
+    /// 依保存天數清掉過期資料、超過 30 天的合併成每小時一筆，再寫檔
+    private func compactAndSave(now: Date = Date()) {
+        points = DeviceHistory.compact(points, now: now, retentionDays: Self.retentionDays)
         if points.count > maxPoints {
             points.removeFirst(points.count - maxPoints)
         }
-        saveHistory()
-    }
-
-    /// 遷移時從日誌回填用
-    func replaceAll(_ newPoints: [HistoryPoint]) {
-        points = Array(newPoints.suffix(maxPoints))
         saveHistory()
     }
 

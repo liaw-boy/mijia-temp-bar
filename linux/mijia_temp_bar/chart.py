@@ -298,8 +298,8 @@ class ChartView(Gtk.DrawingArea):
             self._draw_glow_dot(cr, x, yb, BAT_COLOR)
             self._draw_glow_dot(cr, x, yh, HUM_COLOR)
             self._draw_glow_dot(cr, x, yt, TEMP_COLOR)
-            text = (f"{datetime.fromtimestamp(p.timestamp):%H:%M:%S}  ·  溫度 {p.temperature:.1f}°C"
-                    f"   濕度 {p.humidity:.0f}%   電量 {p.batteryPercent}%")
+            text = (f"{datetime.fromtimestamp(p.timestamp):%-m/%-d %H:%M}    │    溫度 {p.temperature:.1f}°C"
+                    f"     濕度 {p.humidity:.0f}%     電量 {p.batteryPercent}%")
             self._draw_tooltip(cr, text, x, min(yt, yh, yb) - 14, rect)
 
     def _draw_single(self, cr: cairo.Context, rect: Rect, start: float, span: float) -> None:
@@ -345,13 +345,13 @@ class ChartView(Gtk.DrawingArea):
         p = self.hovered_point
         if p is not None:
             x = self._x_for(p.timestamp, start, span, rect)
-            time_str = f"{datetime.fromtimestamp(p.timestamp):%H:%M:%S}"
+            time_str = f"{datetime.fromtimestamp(p.timestamp):%-m/%-d %H:%M}"
             if self._data_type == ChartDataType.TEMPERATURE:
-                value, text = p.temperature, f"{time_str}  ·  溫度 {p.temperature:.1f} °C"
+                value, text = p.temperature, f"{time_str}    │    溫度 {p.temperature:.1f} °C"
             elif self._data_type == ChartDataType.HUMIDITY:
-                value, text = p.humidity, f"{time_str}  ·  濕度 {p.humidity:.0f} %"
+                value, text = p.humidity, f"{time_str}    │    濕度 {p.humidity:.0f} %"
             else:
-                value, text = p.voltage, f"{time_str}  ·  電壓 {p.voltage:.3f} V ({p.batteryPercent}%)"
+                value, text = p.voltage, f"{time_str}    │    電壓 {p.voltage:.3f} V ({p.batteryPercent}%)"
             y = y_for(value)
             self._draw_crosshair(cr, x, rect)
             self._draw_glow_dot(cr, x, y, color)

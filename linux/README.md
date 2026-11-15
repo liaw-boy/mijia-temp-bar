@@ -16,6 +16,8 @@ MijiaTempBar 的 Linux 移植版本：在桌面系統匣（GNOME 頂部面板 / 
 ## 功能 (Features)
 
 - **多台溫濕度計**：從選單「搜尋新裝置…」掃描約 20 秒後勾選加入（不會自動加入鄰居的）；狀態列顯示一台「主裝置」，選單第一層直接點就切換，「管理裝置」子選單可立即更新、改名、移除。每台的讀取、歷史、退避與通知各自獨立，一台連不到不影響其他台。
+- **自動補上空白**：電腦睡眠或不在範圍內時沒有讀數，下次連上會讀回溫濕度計內存的每小時紀錄（原廠韌體，免綁定）補上圖表空白；只有空白超過 1 小時才多讀；保存天數內的舊空白也會分段補上。
+- **歷史保存天數**：設定頁可選 30／90／180 天或 1 年（預設 30 天）。最近 30 天完整保留，更舊的每小時留一筆，1 年約 2 MB。
 - **帶筆電換地方**：主裝置不在附近、但別台在附近時，狀態列自動改顯示附近那台（不改主裝置設定）；從睡眠喚醒（systemd-logind）或換到另一個網路（預設閘道不同）時所有裝置立刻重新偵測；VPN、Docker 等虛擬介面的變動不算，避免多耗溫濕度計電池。
 - **與 macOS 版相同的 5 種狀態列樣式**：雙行微型膠囊 `[TMP] / [HUM]`、純數字雙行堆疊、橫向完整、僅溫度、緊湊單行。
 - **原廠韌體「即連即斷」省電讀取**：透過 BlueZ GATT 讀取一次數據後立即斷線，讓硬體回到 Deep Sleep。
@@ -140,6 +142,7 @@ linux/
 │   ├── bluetooth.py          # BlueZ (bleak) 掃描、GATT 即連即斷    (BluetoothManager.swift)
 │   ├── parsers.py            # 原廠 GATT / ATC / pvvx / BTHome 解析
 │   ├── history.py            # 歷史數據保存與 CSV 匯出             (HistoryManager.swift)
+│   ├── device_history.py     # 讀回裝置內存的每小時紀錄並補空白     (DeviceHistory.swift)
 │   ├── dashboard.py          # 彈出式儀表板與設定分頁                    (DashboardWindowController.swift)
 │   ├── chart.py              # Cairo 歷史趨勢折線圖                 (ChartView.swift)
 │   ├── icons.py              # 狀態列膠囊影像與 App 圖示            (generate_icon.swift)

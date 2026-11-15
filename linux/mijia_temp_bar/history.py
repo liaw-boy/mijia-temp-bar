@@ -10,7 +10,7 @@ from typing import ClassVar, Dict, List, Optional
 
 from .devices import copy_without_overwrite, history_path_for
 from .logger import mijia_log
-from .settings import DATA_DIR, atomic_write_text
+from .settings import DATA_DIR, atomic_write_text, settings
 
 HISTORY_DIR = DATA_DIR / "history"
 LEGACY_HISTORY_PATH = DATA_DIR / "history.json"  # 舊版單一裝置的歷史檔 (只讀取來遷移，不再寫入)
@@ -28,7 +28,7 @@ class HistoryPoint:
 class HistoryManager:
     _by_path: ClassVar[Dict[Path, "HistoryManager"]] = {}
 
-    MAX_POINTS = 8640  # 最多保留 30 天 (5 分鐘間隔 = 8640 筆)
+    MAX_POINTS = 100_000  # 筆數保險上限：更新間隔設很短時 (最短 30 秒) 最近 30 天的完整資料也可能很多
 
     @classmethod
     def for_device(cls, device_id: str, base: Path = HISTORY_DIR) -> "HistoryManager":
@@ -58,6 +58,21 @@ class HistoryManager:
             voltage=volt,
             batteryPercent=battery,
         ))
+        self._compact_and_save()
+
+    def replace_all(self, points: List[HistoryPoint]) -> None:
+        """用裝置內存的紀錄補空白後整批寫回。"""
+        self.points = list(points)
+        self._compact_and_save()
+
+    def _now(self) -> float:
+        return time.time()
+
+    def _compact_and_save(self) -> None:
+        """依保存天數清掉過期資料、超過 30 天的合併成每小時一筆，再寫檔。"""
+        from . import device_history  # device_history 也引用本模組的 HistoryPoint，避免循環 import
+        retention = device_history.retention_days(settings.get(device_history.RETENTION_KEY))
+        self.points = device_history.compact(self.points, self._now(), retention)
         if len(self.points) > self.MAX_POINTS:
             del self.points[:len(self.points) - self.MAX_POINTS]
         self._save()
